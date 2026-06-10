@@ -46,8 +46,14 @@ export function useJEIData() {
 // ── Customers ──
 export const updateCustomerRate = (id, rate_per_kg) =>
   supabase.from("customers").update({ rate_per_kg }).eq("id", id);
+export const updateCustomer = (id, patch) =>
+  supabase.from("customers").update(patch).eq("id", id);
 export const addCustomer = (name, rate_per_kg) =>
   supabase.from("customers").insert({ name, rate_per_kg }).select();
+export const addCustomerFull = (data) =>
+  supabase.from("customers").insert(data).select();
+export const deleteCustomer = (id) =>
+  supabase.from("customers").delete().eq("id", id);
 
 // ── Orders: full CRUD ──
 // Generate the next ORD-#### id based on existing orders.
@@ -63,6 +69,17 @@ export const updateOrder = (id, patch) =>
   supabase.from("orders").update(patch).eq("id", id);
 export const deleteOrder = (id) =>
   supabase.from("orders").delete().eq("id", id);
+
+// Delete an order, and if its shipment has no other orders, delete the shipment too.
+export async function cascadeDeleteOrder(orderId, shipmentId, allOrders) {
+  const { error } = await deleteOrder(orderId);
+  if (error) return { error };
+  const remaining = allOrders.filter(o => o.shipment_id === shipmentId && o.id !== orderId);
+  if (remaining.length === 0 && shipmentId) {
+    await deleteShipment(shipmentId);
+  }
+  return { error: null };
+}
 
 // ── Shipments: create + stage transition ──
 export function nextShipmentId(shipments) {

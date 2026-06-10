@@ -1,9 +1,11 @@
-import { useState, useMemo } from "react";
-import { Package, Ship, Truck, Eye, EyeOff, Search, ChevronRight, AlertCircle, CheckCircle2, FileText, Calculator, Tag, LayoutGrid, Plus, Printer, LogOut, RefreshCw, Pencil, Boxes, Circle, CreditCard, ExternalLink, Copy, Check } from "lucide-react";
+import { useState, useMemo, useRef, useEffect } from "react";
+import { Package, Ship, Truck, Eye, EyeOff, Search, ChevronRight, AlertCircle, CheckCircle2, FileText, Calculator, Tag, LayoutGrid, Plus, Printer, LogOut, RefreshCw, Pencil, Boxes, Circle, CreditCard, ExternalLink, Copy, Check, Download, Users, DollarSign, TrendingUp } from "lucide-react";
 import { useAuth } from "../lib/auth";
 import { useJEIData, updateCustomerRate, addCustomer, setShipmentStage, setShipmentPayment, setShipmentTracking } from "../lib/data";
 import { chargeable, fmtIDR, fmtShort, toIDR, trackingUrl, MIN_KG, IN_TO_CM, LB_TO_KG } from "../lib/pricing";
+import { generateInvoicePDF, generateQuotationPDF } from "../lib/pdf";
 import OrderForm from "../components/OrderForm";
+import CustomerData from "../components/CustomerData";
 import { LOGO } from "../lib/logo";
 
 const STAGES = ["Package received in US","Sent from US","Received in SG","Sent to ID","Received in ID","Delivered to customer"];
@@ -48,7 +50,14 @@ export default function Dashboard() {
   };
 
   const ctx = { D, isOwner, custName, custRate, courierOf, shipmentOf, costsFor, quote, orderCostIDR, shipCostIDR, reload: D.reload };
-  const TABS = [{k:"orders",label:"Orders",icon:LayoutGrid},{k:"shipments",label:"Shipments",icon:Boxes},{k:"pricing",label:"Pricing",icon:Tag},{k:"invoices",label:"Invoices",icon:FileText}];
+  const TABS = [
+    {k:"orders",label:"Orders",icon:LayoutGrid},
+    {k:"shipments",label:"Shipments",icon:Boxes},
+    {k:"customers",label:"Customers",icon:Users},
+    {k:"pricing",label:"Pricing",icon:Tag},
+    {k:"invoices",label:"Invoices",icon:FileText},
+    ...(isOwner ? [{k:"finance",label:"Finance",icon:TrendingUp}] : []),
+  ];
 
   return (
     <div style={S.root}><style>{CSS}</style>
@@ -77,8 +86,10 @@ export default function Dashboard() {
 
       {tab==="orders"   && <Orders ctx={ctx}/>}
       {tab==="shipments"&& <Shipments ctx={ctx}/>}
+      {tab==="customers"&& <CustomerData ctx={ctx}/>}
       {tab==="pricing"  && <Pricing ctx={ctx} reload={D.reload}/>}
       {tab==="invoices" && <Invoices ctx={ctx}/>}
+      {tab==="finance" && isOwner && <Finance ctx={ctx}/>}
 
       <footer style={S.footer}>
         {isOwner ? "Full financial visibility" : "Operations & pricing — landed cost / margin hidden by database policy"}
@@ -319,19 +330,45 @@ function Pricing({ctx,reload}){
 }
 
 function QuoteCalc({ctx}){
-  const {D,courierOf,custRate}=ctx;
-  const [custId,setCust]=useState(D.customers[0]?.id??"");
+  const {D,courierOf}=ctx;
+  const [custName,setCustName]=useState("");
+  const [custId,setCustId]=useState("");
+  const [ratePerKg,setRate]=useState(0);
   const [courier,setCourier]=useState(D.couriers[0]?.id??"");
   const [unit,setUnit]=useState("metric");
   const [l,setL]=useState(80),[w,setW]=useState(60),[h,setH]=useState(55),[wt,setWt]=useState(62);
+
+  // autocomplete
+  const matches=useMemo(()=>{
+    if(!custName.trim()) return D.customers;
+    return D.customers.filter(c=>c.name.toLowerCase().includes(custName.toLowerCase()));
+  },[custName,D.customers]);
+  const [ddOpen,setDdOpen]=useState(false);
+  const ddRef=useRef(null);
+  useEffect(()=>{
+    const h=(e)=>{if(ddRef.current&&!ddRef.current.contains(e.target))setDdOpen(false);};
+    document.addEventListener("mousedown",h);return()=>document.removeEventListener("mousedown",h);
+  },[]);
+  function pickCust(c){setCustName(c.name);setCustId(c.id);setRate(c.rate_per_kg||0);setDdOpen(false);}
+
   const r=useMemo(()=>{
     const lc=unit==="imperial"?{l:l*IN_TO_CM,w:w*IN_TO_CM,h:h*IN_TO_CM}:{l:+l,w:+w,h:+h};
     const wkg=unit==="imperial"?wt*LB_TO_KG:+wt;
     const div=courierOf(courier)?.divisor??5000;
     const {vol,charged,basis,minApplied}=chargeable(lc,wkg,div);
-    const rate=custRate(custId);
-    return{wkg,div,vol,charged,basis,minApplied,rate,price:charged*rate};
-  },[custId,courier,unit,l,w,h,wt,D.customers]);
+    return{wkg,lc,div,vol,charged,basis,minApplied,rate:+ratePerKg,price:charged*(+ratePerKg)};
+  },[ratePerKg,courier,unit,l,w,h,wt]);
+
+  function downloadPDF(){
+    const c=courierOf(courier);
+    const doc=generateQuotationPDF({
+      customerName:custName||"Customer",weight:r.wkg,
+      dims:r.lc,divisor:r.div,courierName:c?.name??"",
+      ratePerKg:+ratePerKg,currency:"IDR",fx:D.fx_rates?.[0]
+    });
+    doc.save(`quotation-${custName||"customer"}.pdf`);
+  }
+
   const In=(label,val,set,suffix)=>(
     <label style={S.field}><span style={S.fLabel}>{label}</span>
       <div style={S.inputWrap}><input type="number" value={val} onChange={e=>set(e.target.value)} style={{...S.input,border:"none",background:"transparent"}}/><span style={S.suffix}>{suffix}</span></div></label>);
@@ -342,12 +379,21 @@ function QuoteCalc({ctx}){
           <button className={"seg "+(unit==="metric"?"on":"")} onClick={()=>setUnit("metric")}>cm / kg</button>
           <button className={"seg "+(unit==="imperial"?"on":"")} onClick={()=>setUnit("imperial")}>in / lb</button></div></div>
       <div style={S.calcGrid}>
-        <label style={S.field}><span style={S.fLabel}>Customer</span>
-          <select value={custId} onChange={e=>setCust(e.target.value)} style={S.input}>{D.customers.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></label>
+        <div ref={ddRef} style={{position:"relative"}}>
+          <label style={S.field}><span style={S.fLabel}>Customer</span>
+            <input style={S.input} value={custName} onChange={e=>{setCustName(e.target.value);setCustId("");setDdOpen(true);}}
+              onFocus={()=>setDdOpen(true)} placeholder="Type customer name…" autoComplete="off"/></label>
+          {ddOpen&&<div style={{position:"absolute",top:"100%",left:0,right:0,background:"var(--card)",border:"1px solid var(--line)",borderRadius:10,maxHeight:150,overflowY:"auto",zIndex:10,boxShadow:"0 8px 24px rgba(0,0,0,.12)"}}>
+            {matches.map(c=>(<button key={c.id} style={{display:"flex",justifyContent:"space-between",width:"100%",padding:"9px 12px",border:"none",background:"transparent",cursor:"pointer",fontFamily:"var(--body)",fontSize:13,textAlign:"left",borderBottom:"1px solid var(--line)"}} onClick={()=>pickCust(c)}><span style={{fontWeight:600}}>{c.name}</span><span style={{fontSize:12,color:"var(--ink-3)"}}>{c.rate_per_kg?`${(c.rate_per_kg/1000).toFixed(0)}k/kg`:""}</span></button>))}
+            {matches.length===0&&<div style={{padding:"9px 12px",fontSize:13,color:"var(--ink-3)"}}>No matches</div>}
+          </div>}
+        </div>
         <label style={S.field}><span style={S.fLabel}>Courier</span>
           <select value={courier} onChange={e=>setCourier(e.target.value)} style={S.input}>{D.couriers.map(c=><option key={c.id} value={c.id}>{c.name} (÷{c.divisor})</option>)}</select></label>
         {In("Length",l,setL,unit==="imperial"?"in":"cm")}{In("Width",w,setW,unit==="imperial"?"in":"cm")}
         {In("Height",h,setH,unit==="imperial"?"in":"cm")}{In("Actual weight",wt,setWt,unit==="imperial"?"lb":"kg")}
+        <label style={S.field}><span style={S.fLabel}>Rate per kg (IDR)</span>
+          <input type="number" value={ratePerKg} onChange={e=>setRate(e.target.value)} style={S.input}/></label>
       </div>
       <div style={S.resultRow}>
         <ResCell label="Actual (metric)" value={`${r.wkg.toFixed(1)} kg`} dim={r.basis!=="actual"||r.minApplied}/>
@@ -356,7 +402,10 @@ function QuoteCalc({ctx}){
         <ResCell label="Rate" value={`${fmtIDR(r.rate)}/kg`}/>
         <ResCell label="Quoted price" value={fmtIDR(r.price)} big/>
       </div>
-      <p style={S.calcFoot}>Charged weight = max(actual, volumetric), floored at 3 kg. Volumetric = L×W×H(cm) ÷ courier divisor.</p>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:10}}>
+        <p style={S.calcFoot}>Charged weight = max(actual, volumetric), floored at 3 kg.</p>
+        <button style={S.printBtn} onClick={downloadPDF}><Download size={13}/> Download PDF</button>
+      </div>
     </div>);
 }
 
@@ -413,9 +462,16 @@ function Invoices({ctx}){
 }
 
 function InvoiceDoc({ctx,order}){
-  const {custName,courierOf,shipmentOf,quote}=ctx;
-  const q=quote(order);const s=shipmentOf(order.shipment_id);
+  const {D,custName,courierOf,shipmentOf,quote}=ctx;
+  const q=quote(order);const s=shipmentOf(order.shipment_id);const c=courierOf(s?.courier_id);
   const invNo="INV-"+order.id.replace("ORD-","");
+  const customer=D.customers.find(cu=>cu.id===order.customer_id);
+
+  function downloadPDF(){
+    const doc=generateInvoicePDF(order,customer,s,c,D.fx_rates?.[0]);
+    doc.save(`${invNo}.pdf`);
+  }
+
   return(
     <div style={S.invoice}>
       <div style={S.invTop}>
@@ -426,20 +482,86 @@ function InvoiceDoc({ctx,order}){
           <div style={{fontSize:12,color:"var(--ink-3)"}}>Issued {s?.eta_id}</div></div></div>
       <div style={S.invMeta}>
         <div><div style={S.dLabel}>Bill to</div><div style={{fontWeight:700,fontSize:15}}>{custName(order.customer_id)}</div></div>
-        <div><div style={S.dLabel}>Shipment</div><div>{order.shipment_id} · {courierOf(s?.courier_id)?.name}</div></div>
+        <div><div style={S.dLabel}>Shipment</div><div>{order.shipment_id} · {c?.name}</div></div>
         <div><div style={S.dLabel}>Status</div><div style={{color:"var(--good)",fontWeight:600}}>Delivered</div></div>
         <div><div style={S.dLabel}>Payment</div><div className={"paybadge pay-"+(s?.payment??"Unpaid")} style={{display:"inline-block"}}>{s?.payment??"Unpaid"}</div></div></div>
       <div style={S.invTableHead}><span style={{flex:3}}>Description</span><span style={{flex:1,textAlign:"right"}}>Chargeable</span><span style={{flex:1,textAlign:"right"}}>Rate</span><span style={{flex:1,textAlign:"right"}}>Amount</span></div>
       <div style={S.invLine}>
         <span style={{flex:3}}><div style={{fontWeight:600}}>{order.product} ×{order.qty}</div>
-          <div style={{fontSize:12,color:"var(--ink-3)"}}>{q.minApplied?"3 kg minimum applied":`Charged on ${q.basis} weight`} ({q.charged.toFixed(1)} kg) · {courierOf(s?.courier_id)?.name} ÷{q.divisor}</div></span>
+          <div style={{fontSize:12,color:"var(--ink-3)"}}>{q.minApplied?"3 kg minimum applied":`Charged on ${q.basis} weight`} ({q.charged.toFixed(1)} kg) · {c?.name} ÷{q.divisor}</div></span>
         <span style={{flex:1,textAlign:"right"}}>{q.charged.toFixed(1)} kg</span>
         <span style={{flex:1,textAlign:"right"}}>{fmtIDR(q.rate)}</span>
         <span style={{flex:1,textAlign:"right",fontWeight:600}}>{fmtIDR(q.price)}</span></div>
       <div style={S.invTotal}><span>Total due</span><span style={{fontFamily:"var(--display)",fontSize:22,fontWeight:800,color:"var(--accent)"}}>{fmtIDR(q.price)}</span></div>
       <div style={S.invFoot}><span>Payment in IDR within 14 days · Bank transfer to JEI account</span>
-        <button style={S.printBtn} onClick={()=>window.print()}><Printer size={13}/> Print / PDF</button></div>
+        <div style={{display:"flex",gap:8}}>
+          <button style={S.printBtn} onClick={downloadPDF}><Download size={13}/> Download PDF</button>
+        </div></div>
     </div>);
+}
+
+// ──────────── FINANCE (owner only) ────────────
+function Finance({ctx}){
+  const {D,isOwner,custName,shipmentOf,courierOf,costsFor,orderCostIDR}=ctx;
+  if(!isOwner) return null;
+  const fx=D.fx_rates?.[0]??{usd_idr:15850,sgd_idr:11900};
+
+  const totalRev=D.orders.reduce((a,o)=>a+Number(o.sell_idr||0),0);
+  const totalCost=D.orders.reduce((a,o)=>a+orderCostIDR(o),0);
+  const profit=totalRev-totalCost;
+  const margin=totalRev>0?((profit/totalRev)*100):0;
+
+  const delivered=D.orders.filter(o=>shipmentOf(o.shipment_id)?.stage==="Delivered to customer");
+  const paidOrders=delivered.filter(o=>shipmentOf(o.shipment_id)?.payment==="Paid");
+  const unpaidOrders=delivered.filter(o=>shipmentOf(o.shipment_id)?.payment!=="Paid");
+  const paidRev=paidOrders.reduce((a,o)=>a+Number(o.sell_idr||0),0);
+  const unpaidRev=unpaidOrders.reduce((a,o)=>a+Number(o.sell_idr||0),0);
+  const invoicedOrders=delivered.filter(o=>shipmentOf(o.shipment_id)?.payment==="Invoiced");
+
+  return(<>
+    <div style={S.sectionLead}><h2 style={S.h2}>Finance</h2>
+      <p style={S.lead}>Revenue, costs, and invoice status across all orders. Costs come from shipment cost entries; margin is calculated after FX conversion.</p></div>
+
+    <section style={S.kpis}>
+      <Kpi label="Revenue" value={fmtShort(totalRev)} sub="total sell value" accent/>
+      <Kpi label="Cost" value={fmtShort(totalCost)} sub="shipment costs (IDR)"/>
+      <Kpi label="Profit" value={fmtShort(profit)} sub={profit>=0?"above breakeven":"below breakeven"} accent={profit>=0} warn={profit<0}/>
+      <Kpi label="Margin" value={`${margin.toFixed(1)}%`} sub="profit / revenue" accent={margin>0}/>
+    </section>
+
+    <h3 style={{...S.h2,fontSize:16,marginTop:24,marginBottom:12}}>Invoice status</h3>
+    <section style={S.kpis}>
+      <Kpi label="Delivered" value={delivered.length} sub={`${fmtShort(delivered.reduce((a,o)=>a+Number(o.sell_idr||0),0))} total`}/>
+      <Kpi label="Paid" value={paidOrders.length} sub={fmtShort(paidRev)} accent/>
+      <Kpi label="Invoiced (unpaid)" value={invoicedOrders.length} sub={fmtShort(invoicedOrders.reduce((a,o)=>a+Number(o.sell_idr||0),0))} warn={invoicedOrders.length>0}/>
+      <Kpi label="Not yet invoiced" value={unpaidOrders.filter(o=>shipmentOf(o.shipment_id)?.payment==="Unpaid").length} sub="delivered but no invoice" warn/>
+    </section>
+
+    {unpaidOrders.length>0 && (<>
+      <h3 style={{...S.h2,fontSize:16,marginTop:24,marginBottom:12}}>Outstanding ({unpaidOrders.length})</h3>
+      <div style={{display:"flex",flexDirection:"column",gap:8}}>
+        {unpaidOrders.map(o=>{
+          const s=shipmentOf(o.shipment_id);
+          return(
+            <div key={o.id} style={{...S.shipCard,padding:14,display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8}}>
+              <div>
+                <span style={{fontFamily:"var(--mono)",fontWeight:700,fontSize:13}}>{o.id}</span>
+                <span style={{marginLeft:10,fontWeight:600}}>{custName(o.customer_id)}</span>
+                <span style={{marginLeft:10,fontSize:12.5,color:"var(--ink-3)"}}>{o.product}</span>
+              </div>
+              <div style={{display:"flex",alignItems:"center",gap:12}}>
+                <span className={"paybadge pay-"+(s?.payment??"Unpaid")}>{s?.payment??"Unpaid"}</span>
+                <span style={{fontFamily:"var(--display)",fontWeight:700,color:"var(--accent)"}}>{fmtIDR(Number(o.sell_idr||0))}</span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <div style={{marginTop:12,fontFamily:"var(--display)",fontWeight:700,fontSize:16,textAlign:"right",color:"var(--bad)"}}>
+        Total outstanding: {fmtIDR(unpaidRev)}
+      </div>
+    </>)}
+  </>);
 }
 
 // ──────────── SHARED ────────────
