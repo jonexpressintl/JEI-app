@@ -4,6 +4,7 @@ import { useAuth } from "../lib/auth";
 import { useJEIData, updateCustomerRate, addCustomer, setShipmentStage, setShipmentPayment, setShipmentTracking } from "../lib/data";
 import { chargeable, fmtIDR, fmtShort, toIDR, trackingUrl, MIN_KG, IN_TO_CM, LB_TO_KG } from "../lib/pricing";
 import OrderForm from "../components/OrderForm";
+import { LOGO } from "../lib/logo";
 
 const STAGES = ["Package received in US","Sent from US","Received in SG","Sent to ID","Received in ID","Delivered to customer"];
 const PAYMENTS = ["Unpaid","Invoiced","Paid"];
@@ -53,7 +54,7 @@ export default function Dashboard() {
     <div style={S.root}><style>{CSS}</style>
       <header style={S.header}>
         <div style={S.brandRow}>
-          <img src="/logo.png" alt="JEI" style={S.logo}/>
+          <img src={LOGO} alt="JEI" style={S.logo}/>
           <div><div style={S.brandName}>JON EXPRESS INTERNATIONAL</div>
           <div style={S.brandSub}>US → Singapore → Indonesia · order, pricing &amp; billing</div></div>
         </div>
@@ -418,7 +419,7 @@ function InvoiceDoc({ctx,order}){
   return(
     <div style={S.invoice}>
       <div style={S.invTop}>
-        <div><img src="/logo.png" alt="JEI" style={{width:60,height:60,objectFit:"contain"}}/><div style={{fontWeight:800,letterSpacing:".12em",marginTop:8}}>JON EXPRESS INTERNATIONAL</div>
+        <div><img src={LOGO} alt="JEI" style={{width:60,height:60,objectFit:"contain"}}/><div style={{fontWeight:800,letterSpacing:".12em",marginTop:8}}>JON EXPRESS INTERNATIONAL</div>
           <div style={{fontSize:12,color:"var(--ink-3)"}}>Freight forwarding · US → SG → ID</div></div>
         <div style={{textAlign:"right"}}><div style={{fontFamily:"var(--display)",fontSize:22,fontWeight:800}}>INVOICE</div>
           <div style={{fontFamily:"var(--mono)",fontSize:13,marginTop:4}}>{invNo}</div>

@@ -1,11 +1,12 @@
 import { useState } from "react";
 import { useAuth } from "../lib/auth";
 import { User, ArrowLeft } from "lucide-react";
+import { LOGO } from "../lib/logo";
 
 // Internal email mapping — users never see these.
 const USERS = [
   { name: "Merry Toh", email: "merry@jei.app", initials: "MT" },
-  { name: "Angie",     email: "angie@jei.app",  initials: "A" },
+  { name: "Admin",     email: "angie@jei.app",  initials: "A" },
 ];
 
 export default function Login() {
@@ -27,7 +28,7 @@ export default function Login() {
   return (
     <div style={S.wrap}>
       <div style={S.card}>
-        <img src="/logo.png" alt="Jon Express International" style={S.logo} />
+        <img src={LOGO} alt="Jon Express International" style={S.logo} />
         <div style={S.title}>Jon Express International</div>
 
         {!selected ? (
