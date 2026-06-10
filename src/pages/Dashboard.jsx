@@ -53,7 +53,7 @@ export default function Dashboard() {
     <div style={S.root}><style>{CSS}</style>
       <header style={S.header}>
         <div style={S.brandRow}>
-          <div style={S.logo}>JEI</div>
+          <img src="/logo.png" alt="JEI" style={S.logo}/>
           <div><div style={S.brandName}>JON EXPRESS INTERNATIONAL</div>
           <div style={S.brandSub}>US → Singapore → Indonesia · order, pricing &amp; billing</div></div>
         </div>
@@ -418,7 +418,7 @@ function InvoiceDoc({ctx,order}){
   return(
     <div style={S.invoice}>
       <div style={S.invTop}>
-        <div><div style={S.logo}>JEI</div><div style={{fontWeight:800,letterSpacing:".12em",marginTop:8}}>JON EXPRESS INTERNATIONAL</div>
+        <div><img src="/logo.png" alt="JEI" style={{width:60,height:60,objectFit:"contain"}}/><div style={{fontWeight:800,letterSpacing:".12em",marginTop:8}}>JON EXPRESS INTERNATIONAL</div>
           <div style={{fontSize:12,color:"var(--ink-3)"}}>Freight forwarding · US → SG → ID</div></div>
         <div style={{textAlign:"right"}}><div style={{fontFamily:"var(--display)",fontSize:22,fontWeight:800}}>INVOICE</div>
           <div style={{fontFamily:"var(--mono)",fontSize:13,marginTop:4}}>{invNo}</div>
@@ -451,7 +451,7 @@ const S={
   root:{fontFamily:"var(--body)",color:"var(--ink)",background:"var(--bg)",minHeight:"100vh",padding:"22px clamp(14px,4vw,40px)",maxWidth:1180,margin:"0 auto"},
   header:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18,flexWrap:"wrap",gap:14},
   brandRow:{display:"flex",alignItems:"center",gap:12},
-  logo:{width:38,height:38,borderRadius:9,background:"var(--accent)",color:"#fff",display:"grid",placeItems:"center",fontSize:13,fontWeight:800,letterSpacing:".04em"},
+  logo:{width:42,height:42,objectFit:"contain",borderRadius:6},
   brandName:{fontFamily:"var(--display)",fontWeight:800,letterSpacing:".14em",fontSize:15},
   brandSub:{fontSize:12,color:"var(--ink-3)",marginTop:1},
   who:{display:"flex",alignItems:"center",gap:6,fontSize:13,fontWeight:600,color:"var(--ink-2)",background:"var(--card)",padding:"7px 12px",borderRadius:10,border:"1px solid var(--line)"},

@@ -58,8 +58,17 @@ create table customers (
 create table shipments (
   id         text primary key,         -- e.g. 'SHP-2401'
   courier_id text references couriers(id),
-  stage      text not null default 'Ordered',
+  stage      text not null default 'Package received in US',
   eta_id     date,                     -- ETA Indonesia
+  payment    text not null default 'Unpaid',
+  stage_updated_at    timestamptz default now(),
+  payment_updated_at  timestamptz default now(),
+  track_us_sg          text,
+  track_us_sg_carrier  text,
+  track_sg_id          text,
+  track_sg_id_carrier  text,
+  track_id_cust        text,
+  track_id_cust_carrier text,
   created_at timestamptz default now()
 );
 

@@ -1,15 +1,17 @@
-import { useState, useMemo } from "react";
-import { X, Trash2 } from "lucide-react";
+import { useState, useMemo, useRef, useEffect } from "react";
+import { X, Trash2, Plus } from "lucide-react";
 import { chargeable, fmtIDR } from "../lib/pricing";
-import { addOrder, updateOrder, deleteOrder, nextOrderId, addShipment, nextShipmentId } from "../lib/data";
+import { addOrder, updateOrder, deleteOrder, nextOrderId, addShipment, nextShipmentId, addCustomer } from "../lib/data";
 import ConfirmDialog from "./ConfirmDialog";
 
 const STAGES = ["Package received in US","Sent from US","Received in SG","Sent to ID","Received in ID","Delivered to customer"];
 
 // snapshot used to detect unsaved changes
 function initialState(order, D) {
+  const cust = D.customers.find(c => c.id === order?.customer_id);
   return {
-    customer_id: order?.customer_id ?? D.customers[0]?.id ?? "",
+    customer_id: order?.customer_id ?? "",
+    customer_name: cust?.name ?? "",
     product: order?.product ?? "",
     qty: order?.qty ?? 1,
     weight_kg: order?.weight_kg ?? 0,
@@ -59,10 +61,19 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
 
   async function save() {
     setErr("");
+    if (!f.customer_name.trim()) return setErr("Customer name is required.");
     if (!f.product.trim()) return setErr("Product name is required.");
-    if (!f.customer_id) return setErr("Pick a customer.");
     setBusy(true);
     try {
+      // Resolve customer: use existing ID, or create new customer
+      let customerId = f.customer_id;
+      if (!customerId) {
+        const { data, error } = await addCustomer(f.customer_name.trim(), 0);
+        if (error) throw error;
+        customerId = data?.[0]?.id;
+        if (!customerId) throw new Error("Failed to create customer.");
+      }
+
       let shipmentId = f.shipment_id;
       // create a new shipment if requested
       if (f.shipment_mode === "new") {
@@ -76,7 +87,7 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
         if (error) throw error;
       }
       const payload = {
-        customer_id: f.customer_id,
+        customer_id: customerId,
         shipment_id: shipmentId,
         product: f.product.trim(),
         qty: +f.qty,
@@ -116,11 +127,12 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
         </div>
 
         <div style={S.body}>
-          <Field label="Customer">
-            <select style={S.input} value={f.customer_id} onChange={set("customer_id")}>
-              {D.customers.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
-          </Field>
+          <CustomerAutocomplete
+            customers={D.customers}
+            value={f.customer_name}
+            selectedId={f.customer_id}
+            onChange={(name, id) => setF({...f, customer_name: name, customer_id: id})}
+          />
           <Field label="Product">
             <input style={S.input} value={f.product} onChange={set("product")} placeholder="e.g. Industrial pumps"/>
           </Field>
@@ -202,6 +214,68 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
 }
 
 function Field({label,children}){return(<label style={S.field}><span style={S.fLabel}>{label}</span>{children}</label>);}
+
+function CustomerAutocomplete({ customers, value, selectedId, onChange }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  const matches = useMemo(() => {
+    if (!value.trim()) return customers;
+    const q = value.toLowerCase();
+    return customers.filter(c => c.name.toLowerCase().includes(q));
+  }, [value, customers]);
+  const exactMatch = customers.find(c => c.name.toLowerCase() === value.trim().toLowerCase());
+
+  useEffect(() => {
+    function handleClick(e) { if (ref.current && !ref.current.contains(e.target)) setOpen(false); }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, []);
+
+  function pick(c) { onChange(c.name, c.id); setOpen(false); }
+  function handleInput(e) { onChange(e.target.value, ""); setOpen(true); }
+
+  return (
+    <div ref={ref} style={{ position: "relative" }}>
+      <Field label="Customer">
+        <input
+          style={{ ...CS.input, ...(selectedId ? CS.confirmed : {}) }}
+          value={value}
+          onChange={handleInput}
+          onFocus={() => setOpen(true)}
+          placeholder="Type customer name…"
+          autoComplete="off"
+        />
+      </Field>
+      {selectedId && <div style={CS.tag}>✓ {customers.find(c=>c.id===selectedId)?.name}</div>}
+      {!selectedId && value.trim() && !exactMatch && (
+        <div style={CS.newTag}><Plus size={12}/> New customer will be created</div>
+      )}
+      {open && (matches.length > 0 || value.trim()) && (
+        <div style={CS.dropdown}>
+          {matches.map(c => (
+            <button key={c.id} style={CS.option} onClick={() => pick(c)}>
+              <span style={CS.optName}>{c.name}</span>
+              <span style={CS.optRate}>{c.rate_per_kg ? `${(c.rate_per_kg/1000).toFixed(0)}k/kg` : "no rate"}</span>
+            </button>
+          ))}
+          {matches.length === 0 && <div style={CS.empty}>No matching customers</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const CS = {
+  input: { border: "1px solid var(--line)", borderRadius: 9, padding: "9px 11px", fontSize: 14, fontFamily: "var(--body)", background: "var(--head)", color: "var(--ink)", outline: "none", width: "100%", boxSizing: "border-box" },
+  confirmed: { borderColor: "var(--good)" },
+  tag: { fontSize: 11.5, color: "var(--good)", fontWeight: 600, marginTop: 4 },
+  newTag: { fontSize: 11.5, color: "var(--accent)", fontWeight: 600, marginTop: 4, display: "flex", alignItems: "center", gap: 4 },
+  dropdown: { position: "absolute", top: "100%", left: 0, right: 0, background: "var(--card)", border: "1px solid var(--line)", borderRadius: 10, marginTop: 4, maxHeight: 180, overflowY: "auto", zIndex: 10, boxShadow: "0 8px 24px rgba(0,0,0,.12)" },
+  option: { display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%", padding: "10px 12px", border: "none", background: "transparent", cursor: "pointer", fontFamily: "var(--body)", fontSize: 13.5, textAlign: "left", borderBottom: "1px solid var(--line)" },
+  optName: { fontWeight: 600, color: "var(--ink)" },
+  optRate: { fontSize: 12, color: "var(--ink-3)" },
+  empty: { padding: "10px 12px", fontSize: 13, color: "var(--ink-3)" },
+};
 
 const S = {
   overlay:{position:"fixed",inset:0,background:"rgba(26,43,42,.45)",display:"grid",placeItems:"center",padding:16,zIndex:50,fontFamily:"var(--body)"},

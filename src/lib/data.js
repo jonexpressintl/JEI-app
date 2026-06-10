@@ -47,7 +47,7 @@ export function useJEIData() {
 export const updateCustomerRate = (id, rate_per_kg) =>
   supabase.from("customers").update({ rate_per_kg }).eq("id", id);
 export const addCustomer = (name, rate_per_kg) =>
-  supabase.from("customers").insert({ name, rate_per_kg });
+  supabase.from("customers").insert({ name, rate_per_kg }).select();
 
 // ── Orders: full CRUD ──
 // Generate the next ORD-#### id based on existing orders.
