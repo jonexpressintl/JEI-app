@@ -394,7 +394,7 @@ function QuoteCalc({ctx}){
     <div style={{...S.card,padding:18,marginBottom:18}}>
       <div style={S.calcHead}><Calculator size={16}/><span style={{fontWeight:700}}>Live quote calculator</span></div>
 
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:14}}>
         <div ref={ddRef} style={{position:"relative"}}>
           <label style={S.field}><span style={S.fLabel}>Customer</span>
             <input style={S.input} value={custName} onChange={e=>{setCustName(e.target.value);setCustId("");setDdOpen(true);}}
@@ -406,9 +406,12 @@ function QuoteCalc({ctx}){
         </div>
         <label style={S.field}><span style={S.fLabel}>Courier</span>
           <select value={courier} onChange={e=>setCourier(e.target.value)} style={S.input}>{D.couriers.map(c=><option key={c.id} value={c.id}>{c.name} (÷{c.divisor})</option>)}</select></label>
+        <label style={S.field}><span style={S.fLabel}>Rate per kg</span>
+          <div style={{display:"flex",gap:6}}>
+            <input type="number" value={ratePerKg} onChange={e=>setRate(e.target.value)} style={{...S.input,flex:1}}/>
+            <select value={rateCur} onChange={e=>setRateCur(e.target.value)} style={{...S.input,width:65}}><option value="IDR">IDR</option><option value="USD">USD</option></select>
+          </div></label>
       </div>
-
-      {/* packages */}
       <div style={{fontSize:11,fontWeight:700,color:"var(--ink-3)",letterSpacing:".04em",marginBottom:6,display:"flex",justifyContent:"space-between"}}>
         <span>PACKAGES ({pkgs.length})</span>
         <button onClick={addPkg} style={{background:"transparent",border:"none",color:"var(--accent)",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"var(--body)"}}><Plus size={12}/> ADD PACKAGE</button>
@@ -427,15 +430,6 @@ function QuoteCalc({ctx}){
           {pkgs.length>1&&<button onClick={()=>removePkg(i)} style={{background:"transparent",border:"none",color:"var(--bad)",cursor:"pointer"}}><Trash2 size={14}/></button>}
         </div>
       );})}
-
-      {/* rate per kg with currency */}
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginTop:10}}>
-        <label style={S.field}><span style={S.fLabel}>Rate per kg</span>
-          <div style={{display:"flex",gap:6}}>
-            <input type="number" value={ratePerKg} onChange={e=>setRate(e.target.value)} style={{...S.input,flex:1}}/>
-            <select value={rateCur} onChange={e=>setRateCur(e.target.value)} style={{...S.input,width:70}}><option value="IDR">IDR</option><option value="USD">USD</option></select>
-          </div></label>
-      </div>
 
       <div style={S.resultRow}>
         <ResCell label="Total actual" value={`${details.reduce((a,d)=>a+d.wkg,0).toFixed(1)} kg`}/>
