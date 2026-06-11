@@ -42,3 +42,14 @@ export function trackingUrl(carrier, number) {
     default:      return null;
   }
 }
+
+// Multi-piece: calculate total chargeable weight across all packages
+export function multiChargeable(packages, divisor) {
+  if (!packages || packages.length === 0) return { total: 0, details: [] };
+  const details = packages.map((p, i) => {
+    const ch = chargeable({ l: +p.l, w: +p.w, h: +p.h }, +p.weight, divisor);
+    return { ...ch, index: i };
+  });
+  const total = details.reduce((a, d) => a + d.charged, 0);
+  return { total, details };
+}

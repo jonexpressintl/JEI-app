@@ -139,7 +139,7 @@ function Orders({ctx}){
     </section>
     <div style={{display:"flex",gap:10,marginBottom:14,flexWrap:"wrap"}}>
       <div style={{...S.searchWrap,flex:1,marginBottom:0}}><Search size={15} style={{opacity:.5}}/><input style={S.search} placeholder="Search orders, customers, products…" value={q} onChange={e=>setQ(e.target.value)}/></div>
-      <button style={S.secBtn} onClick={()=>exportCSV(exportOrders(D.orders,D.customers),"jei-orders.csv")}><Download size={13}/> Export CSV</button>
+      <button style={S.secBtn} onClick={()=>exportCSV(exportOrders(D.orders,D.customers,D.shipments),"jei-orders.csv")}><Download size={13}/> Export CSV</button>
       <button style={S.primaryBtn} onClick={openNew}><Plus size={15}/> New order</button>
     </div>
     <div style={S.card}>
@@ -481,7 +481,7 @@ function InvoiceDoc({ctx,order}){
   const customer=D.customers.find(cu=>cu.id===order.customer_id);
 
   function downloadPDF(){
-    const doc=generateInvoicePDF(order,customer,s,c,D.fx_rates?.[0]);
+    const doc=generateInvoicePDF(order,customer,s,c,ctx.liveFx,D.orders);
     doc.save(`${invNo}.pdf`);
   }
 

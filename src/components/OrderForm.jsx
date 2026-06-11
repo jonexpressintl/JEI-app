@@ -26,14 +26,12 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
     // step 2: goods
     product: order?.product ?? "",
     qty: order?.qty ?? 1,
-    weight_kg: order?.weight_kg ?? 0,
-    dim_l_cm: order?.dim_l_cm ?? 0,
-    dim_w_cm: order?.dim_w_cm ?? 0,
-    dim_h_cm: order?.dim_h_cm ?? 0,
+    packages: (order?.packages && order.packages.length > 0) ? order.packages : [{ weight: order?.weight_kg ?? 0, l: order?.dim_l_cm ?? 0, w: order?.dim_w_cm ?? 0, h: order?.dim_h_cm ?? 0 }],
     sell_idr: order?.sell_idr ?? 0,
     sell_currency: order?.sell_currency ?? "IDR",
-    sell_input: order?.sell_idr ?? 0,
+    sell_input: order?.sell_currency === "USD" ? (order?.sell_idr / (ctx.liveFx?.usd_idr || 15850)).toFixed(2) : (order?.sell_idr ?? 0),
     price_per_kg: order?.price_per_kg ?? (existingCust?.rate_per_kg ?? 0),
+    price_currency: order?.price_currency ?? "IDR",
     unit: "metric",
     // shipment
     shipment_mode: order ? "existing" : "new",
@@ -64,15 +62,29 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
     setF({ ...f, sell_input: val, sell_idr: sellIdr });
   }
 
-  // weight/dim in current unit
-  const wKg = f.unit === "metric" ? +f.weight_kg : +f.weight_kg * LB_TO_KG;
-  const lCm = f.unit === "metric" ? +f.dim_l_cm : +f.dim_l_cm * IN_TO_CM;
-  const wCm = f.unit === "metric" ? +f.dim_w_cm : +f.dim_w_cm * IN_TO_CM;
-  const hCm = f.unit === "metric" ? +f.dim_h_cm : +f.dim_h_cm * IN_TO_CM;
+  // Package helpers
+  function setPkg(idx, key, val) {
+    const pkgs = [...f.packages];
+    pkgs[idx] = { ...pkgs[idx], [key]: val };
+    setF({ ...f, packages: pkgs });
+  }
+  function addPkg() { setF({ ...f, packages: [...f.packages, { weight: 0, l: 0, w: 0, h: 0 }] }); }
+  function removePkg(idx) { if (f.packages.length <= 1) return; setF({ ...f, packages: f.packages.filter((_, i) => i !== idx) }); }
+
+  // Convert packages to metric
+  const metricPkgs = f.packages.map(p => ({
+    weight: f.unit === "metric" ? +p.weight : +p.weight * LB_TO_KG,
+    l: f.unit === "metric" ? +p.l : +p.l * IN_TO_CM,
+    w: f.unit === "metric" ? +p.w : +p.w * IN_TO_CM,
+    h: f.unit === "metric" ? +p.h : +p.h * IN_TO_CM,
+  }));
 
   const courier = D.couriers.find(c => c.id === (f.shipment_mode === "new" ? f.new_courier : D.shipments.find(s => s.id === f.shipment_id)?.courier_id));
-  const ch = chargeable({ l: lCm, w: wCm, h: hCm }, wKg, courier?.divisor ?? 5000);
-  const quote = ch.charged * (+f.price_per_kg);
+  const div = courier?.divisor ?? 5000;
+  // Sum chargeable across all packages
+  let totalCharged = 0;
+  metricPkgs.forEach(p => { const ch = chargeable({ l: p.l, w: p.w, h: p.h }, p.weight, div); totalCharged += ch.charged; });
+  const quote = totalCharged * (+f.price_per_kg);
 
   async function save() {
     setErr(""); setBusy(true);
@@ -100,9 +112,12 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
       const payload = {
         customer_id: customerId, shipment_id: shipmentId,
         product: f.product.trim(), qty: +f.qty,
-        weight_kg: wKg, dim_l_cm: lCm, dim_w_cm: wCm, dim_h_cm: hCm,
+        weight_kg: metricPkgs[0]?.weight || 0,
+        dim_l_cm: metricPkgs[0]?.l || 0, dim_w_cm: metricPkgs[0]?.w || 0, dim_h_cm: metricPkgs[0]?.h || 0,
+        packages: metricPkgs,
         sell_idr: +f.sell_idr, sell_currency: f.sell_currency,
-        price_per_kg: +f.price_per_kg, order_date: f.order_date,
+        price_per_kg: +f.price_per_kg, price_currency: f.price_currency,
+        order_date: f.order_date,
       };
       if (editing) {
         payload.id = order.id;
@@ -171,42 +186,58 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
               <span style={S.toggleLabel}>Units:</span>
               {["metric", "imperial"].map(u => (
                 <button key={u} style={f.unit === u ? S.togOn : S.togOff} onClick={() => setF({ ...f, unit: u })}>
-                  {u === "metric" ? "Metric (kg/cm)" : "Imperial (lbs/in)"}
+                  {u === "metric" ? "kg / cm" : "lbs / in"}
                 </button>
               ))}
             </div>
 
-            <div style={S.row3}>
-              <Field label="Qty"><input style={S.input} type="number" value={f.qty} onChange={set("qty")} /></Field>
-              <Field label={f.unit === "metric" ? "Weight (kg)" : "Weight (lbs)"}><input style={S.input} type="number" value={f.weight_kg} onChange={set("weight_kg")} /></Field>
-              <Field label="Price per kg (IDR)"><input style={S.input} type="number" value={f.price_per_kg} onChange={set("price_per_kg")} /></Field>
+            {/* packages */}
+            <div style={{ fontSize: 12, fontWeight: 700, color: "var(--ink-3)", marginBottom: 6, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span>PACKAGES ({f.packages.length})</span>
+              <button style={S.togOff} onClick={addPkg}><Plus size={12} /> Add package</button>
             </div>
-            <div style={S.row3}>
-              <Field label={f.unit === "metric" ? "L (cm)" : "L (in)"}><input style={S.input} type="number" value={f.dim_l_cm} onChange={set("dim_l_cm")} /></Field>
-              <Field label={f.unit === "metric" ? "W (cm)" : "W (in)"}><input style={S.input} type="number" value={f.dim_w_cm} onChange={set("dim_w_cm")} /></Field>
-              <Field label={f.unit === "metric" ? "H (cm)" : "H (in)"}><input style={S.input} type="number" value={f.dim_h_cm} onChange={set("dim_h_cm")} /></Field>
-            </div>
-
-            {/* sell price with currency toggle */}
-            <div style={S.row2}>
-              <div>
-                <Field label="Sell price">
-                  <div style={{ display: "flex", gap: 6 }}>
-                    <input style={{ ...S.input, flex: 1 }} type="number" value={f.sell_input} onChange={e => setSellInput(e.target.value)} />
-                    <select style={{ ...S.input, width: 80 }} value={f.sell_currency} onChange={e => setCurrency(e.target.value)}>
-                      <option value="IDR">IDR</option>
-                      <option value="USD">USD</option>
-                    </select>
-                  </div>
-                </Field>
-                {f.sell_currency === "USD" && <div style={S.fxNote}>≈ {fmtIDR(+f.sell_idr)}</div>}
+            {f.packages.map((p, i) => (
+              <div key={i} style={S.pkgRow}>
+                <span style={{ fontSize: 11, color: "var(--ink-3)", fontWeight: 700, minWidth: 20 }}>#{i + 1}</span>
+                <input style={S.pkgInput} type="number" placeholder={f.unit === "metric" ? "kg" : "lbs"} value={p.weight} onChange={e => setPkg(i, "weight", e.target.value)} title="Weight" />
+                <input style={S.pkgInput} type="number" placeholder="L" value={p.l} onChange={e => setPkg(i, "l", e.target.value)} />
+                <span style={{ color: "var(--ink-3)", fontSize: 12 }}>×</span>
+                <input style={S.pkgInput} type="number" placeholder="W" value={p.w} onChange={e => setPkg(i, "w", e.target.value)} />
+                <span style={{ color: "var(--ink-3)", fontSize: 12 }}>×</span>
+                <input style={S.pkgInput} type="number" placeholder="H" value={p.h} onChange={e => setPkg(i, "h", e.target.value)} />
+                <span style={{ fontSize: 11, color: "var(--ink-3)" }}>{f.unit === "metric" ? "cm" : "in"}</span>
+                {f.packages.length > 1 && <button style={S.pkgDel} onClick={() => removePkg(i)}><Trash2 size={12} /></button>}
               </div>
-              <div></div>
+            ))}
+
+            <Field label="Qty (items)"><input style={S.input} type="number" value={f.qty} onChange={set("qty")} /></Field>
+
+            {/* price per kg with currency */}
+            <div style={S.row2}>
+              <Field label="Price per kg">
+                <div style={{ display: "flex", gap: 6 }}>
+                  <input style={{ ...S.input, flex: 1 }} type="number" value={f.price_per_kg} onChange={set("price_per_kg")} />
+                  <select style={{ ...S.input, width: 75 }} value={f.price_currency} onChange={e => setF({ ...f, price_currency: e.target.value })}>
+                    <option value="IDR">IDR</option>
+                    <option value="USD">USD</option>
+                  </select>
+                </div>
+              </Field>
+              <Field label="Sell price">
+                <div style={{ display: "flex", gap: 6 }}>
+                  <input style={{ ...S.input, flex: 1 }} type="number" value={f.sell_input} onChange={e => setSellInput(e.target.value)} />
+                  <select style={{ ...S.input, width: 75 }} value={f.sell_currency} onChange={e => setCurrency(e.target.value)}>
+                    <option value="IDR">IDR</option>
+                    <option value="USD">USD</option>
+                  </select>
+                </div>
+                {f.sell_currency === "USD" && <div style={S.fxNote}>≈ {fmtIDR(+f.sell_idr)}</div>}
+              </Field>
             </div>
 
             {/* shipment */}
             <div style={S.shipToggle}>
-              <button style={f.shipment_mode === "existing" ? S.togOff : S.togOn} onClick={() => setF({ ...f, shipment_mode: "new" })}>Create new shipment</button>
+              <button style={f.shipment_mode === "new" ? S.togOn : S.togOff} onClick={() => setF({ ...f, shipment_mode: "new" })}>Create new shipment</button>
               {D.shipments.length > 0 && <button style={f.shipment_mode === "existing" ? S.togOn : S.togOff} onClick={() => setF({ ...f, shipment_mode: "existing" })}>Add to existing</button>}
             </div>
             {f.shipment_mode === "new" ? (
@@ -224,7 +255,7 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
 
             {/* live quote */}
             <div style={S.quote}>
-              <span>Charged: <b>{ch.charged.toFixed(1)} kg</b> ({ch.basis}{ch.minApplied ? ", 3kg min" : ""}, ÷{courier?.divisor ?? "?"})</span>
+              <span>Charged: <b>{totalCharged.toFixed(1)} kg</b> ({f.packages.length} pkg{f.packages.length > 1 ? "s" : ""}, ÷{div})</span>
               <span>Quote: <b style={{ color: "var(--accent)" }}>{fmtIDR(quote)}</b></span>
             </div>
           </>)}
@@ -324,4 +355,7 @@ const S = {
   saveBtn: { background: "var(--accent)", color: "#fff", border: "none", borderRadius: 9, padding: "9px 18px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "var(--body)" },
   dropdown: { position: "absolute", top: "100%", left: 0, right: 0, background: "var(--card)", border: "1px solid var(--line)", borderRadius: 10, marginTop: 4, maxHeight: 160, overflowY: "auto", zIndex: 10, boxShadow: "0 8px 24px rgba(0,0,0,.12)" },
   ddItem: { display: "flex", justifyContent: "space-between", width: "100%", padding: "10px 12px", border: "none", background: "transparent", cursor: "pointer", fontFamily: "var(--body)", fontSize: 13.5, textAlign: "left", borderBottom: "1px solid var(--line)" },
+  pkgRow: { display: "flex", alignItems: "center", gap: 6, marginBottom: 8, background: "var(--head)", border: "1px solid var(--line)", borderRadius: 9, padding: "8px 10px" },
+  pkgInput: { width: 58, border: "1px solid var(--line)", borderRadius: 7, padding: "7px 6px", fontSize: 13, fontFamily: "var(--body)", background: "var(--card)", color: "var(--ink)", outline: "none", textAlign: "center", boxSizing: "border-box" },
+  pkgDel: { display: "grid", placeItems: "center", background: "transparent", border: "none", color: "var(--bad)", cursor: "pointer", padding: 4 },
 };

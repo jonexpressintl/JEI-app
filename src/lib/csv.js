@@ -50,24 +50,41 @@ function parseLine(line) {
   return result;
 }
 
-// Export orders with customer names for readability
-export function exportOrders(orders, customers) {
-  const custMap = Object.fromEntries(customers.map(c => [c.id, c.name]));
-  return orders.map(o => ({
-    order_id: o.id,
-    customer: custMap[o.customer_id] || "",
-    product: o.product,
-    qty: o.qty,
-    weight_kg: o.weight_kg,
-    dim_l_cm: o.dim_l_cm,
-    dim_w_cm: o.dim_w_cm,
-    dim_h_cm: o.dim_h_cm,
-    sell_idr: o.sell_idr,
-    sell_currency: o.sell_currency || "IDR",
-    price_per_kg: o.price_per_kg || 0,
-    order_date: o.order_date || "",
-    shipment_id: o.shipment_id || "",
-  }));
+// Export ALL data with shipment info
+export function exportOrders(orders, customers, shipments) {
+  const custMap = Object.fromEntries(customers.map(c => [c.id, c]));
+  const shipMap = Object.fromEntries(shipments.map(s => [s.id, s]));
+  return orders.map(o => {
+    const c = custMap[o.customer_id] || {};
+    const s = shipMap[o.shipment_id] || {};
+    return {
+      order_id: o.id,
+      order_date: o.order_date || "",
+      customer: c.name || "",
+      contact_person: c.contact_person || "",
+      contact_number: c.contact_number || "",
+      address: c.address || "",
+      states: c.states || "",
+      product: o.product,
+      qty: o.qty,
+      weight_kg: o.weight_kg,
+      dim_l_cm: o.dim_l_cm,
+      dim_w_cm: o.dim_w_cm,
+      dim_h_cm: o.dim_h_cm,
+      packages: o.packages ? JSON.stringify(o.packages) : "",
+      sell_idr: o.sell_idr,
+      sell_currency: o.sell_currency || "IDR",
+      price_per_kg: o.price_per_kg || 0,
+      price_currency: o.price_currency || "IDR",
+      shipment_id: o.shipment_id || "",
+      shipment_stage: s.stage || "",
+      shipment_payment: s.payment || "",
+      shipment_courier: s.courier_id || "",
+      tracking_us_sg: s.track_us_sg || "",
+      tracking_sg_id: s.track_sg_id || "",
+      tracking_id_cust: s.track_id_cust || "",
+    };
+  });
 }
 
 export function exportCustomers(customers) {
