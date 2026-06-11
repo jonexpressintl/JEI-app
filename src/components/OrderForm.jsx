@@ -20,6 +20,7 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
     order_date: order?.order_date ?? new Date().toISOString().slice(0, 10),
     states: existingCust?.states ?? "",
     shipping_mark: existingCust?.shipping_mark ?? "",
+    contact_person: existingCust?.contact_person ?? "",
     contact_number: existingCust?.contact_number ?? "",
     address: existingCust?.address ?? "",
     // step 2: goods
@@ -50,14 +51,14 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
 
   // convert sell price when currency changes
   function setCurrency(cur) {
-    const fx = D.fx_rates?.[0] ?? { usd_idr: 15850 };
+    const fx = ctx.liveFx ?? { usd_idr: 15850 };
     let sellIdr = +f.sell_input;
     if (cur === "USD") sellIdr = +f.sell_input * fx.usd_idr;
     else sellIdr = +f.sell_input;
     setF({ ...f, sell_currency: cur, sell_idr: sellIdr });
   }
   function setSellInput(val) {
-    const fx = D.fx_rates?.[0] ?? { usd_idr: 15850 };
+    const fx = ctx.liveFx ?? { usd_idr: 15850 };
     let sellIdr = +val;
     if (f.sell_currency === "USD") sellIdr = +val * fx.usd_idr;
     setF({ ...f, sell_input: val, sell_idr: sellIdr });
@@ -78,7 +79,7 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
     try {
       // resolve customer
       let customerId = f.customer_id;
-      const custProfile = { states: f.states, shipping_mark: f.shipping_mark, contact_number: f.contact_number, address: f.address };
+      const custProfile = { states: f.states, shipping_mark: f.shipping_mark, contact_person: f.contact_person, contact_number: f.contact_number, address: f.address };
       if (!customerId && f.customer_name.trim()) {
         const { data, error } = await addCustomer(f.customer_name.trim(), +f.price_per_kg || 0);
         if (error) throw error;
@@ -149,14 +150,15 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
                 const c = D.customers.find(x => x.id === id);
                 setF({ ...f, customer_name: name, customer_id: id,
                   states: c?.states || f.states, shipping_mark: c?.shipping_mark || f.shipping_mark,
-                  contact_number: c?.contact_number || f.contact_number, address: c?.address || f.address,
-                  price_per_kg: c?.rate_per_kg || f.price_per_kg });
+                  contact_person: c?.contact_person || f.contact_person, contact_number: c?.contact_number || f.contact_number,
+                  address: c?.address || f.address, price_per_kg: c?.rate_per_kg || f.price_per_kg });
               }} />
             <Field label="Order date"><input style={S.input} type="date" value={f.order_date} onChange={set("order_date")} /></Field>
             <div style={S.row2}>
               <Field label="States"><input style={S.input} value={f.states} onChange={set("states")} placeholder="e.g. California" /></Field>
               <Field label="Shipping mark"><input style={S.input} value={f.shipping_mark} onChange={set("shipping_mark")} placeholder="Mark / label" /></Field>
             </div>
+            <Field label="Contact person"><input style={S.input} value={f.contact_person} onChange={set("contact_person")} placeholder="Name of contact" /></Field>
             <Field label="Contact number"><input style={S.input} value={f.contact_number} onChange={set("contact_number")} placeholder="+1 234 567 8900" /></Field>
             <Field label="Address"><input style={S.input} value={f.address} onChange={set("address")} placeholder="Full shipping address" /></Field>
           </>)}

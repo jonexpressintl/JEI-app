@@ -1,8 +1,8 @@
 import { jsPDF } from "jspdf";
-import "jspdf-autotable";
+import autoTable from "jspdf-autotable";
 import { chargeable, fmtIDR } from "./pricing";
 
-const ACCENT = [14, 110, 92]; // #0E6E5C
+const ACCENT = [14, 110, 92];
 const INK = [26, 43, 42];
 const GRAY = [138, 151, 148];
 
@@ -17,38 +17,35 @@ function header(doc, title, subtitle) {
   doc.setDrawColor(...ACCENT); doc.setLineWidth(0.6); doc.line(20, 37, 190, 37);
 }
 
-function labelValue(doc, x, y, label, value) {
+function lv(doc, x, y, label, value) {
   doc.setFontSize(8); doc.setFont("helvetica", "normal"); doc.setTextColor(...GRAY);
   doc.text(label, x, y);
   doc.setFontSize(10); doc.setFont("helvetica", "bold"); doc.setTextColor(...INK);
   doc.text(String(value ?? "—"), x, y + 5);
 }
 
-// ── INVOICE PDF ──
-export function generateInvoicePDF(order, customer, shipment, courier, fx) {
+export function generateInvoicePDF(order, customer, shipment, courier) {
   const doc = new jsPDF();
   const invNo = "INV-" + String(order.id).replace(/\D/g, "");
   header(doc, "INVOICE", invNo);
 
-  // customer & shipment info
-  labelValue(doc, 20, 46, "BILL TO", customer?.name ?? "—");
-  labelValue(doc, 80, 46, "SHIPMENT", `${shipment?.id ?? "—"} · ${courier?.name ?? ""}`);
-  labelValue(doc, 130, 46, "STATUS", shipment?.stage ?? "—");
-  labelValue(doc, 20, 60, "PAYMENT", shipment?.payment ?? "Unpaid");
-  labelValue(doc, 80, 60, "DATE", order.order_date ?? "—");
+  lv(doc, 20, 46, "BILL TO", customer?.name ?? "—");
+  lv(doc, 80, 46, "SHIPMENT", `${shipment?.id ?? "—"} · ${courier?.name ?? ""}`);
+  lv(doc, 130, 46, "STATUS", shipment?.stage ?? "—");
+  lv(doc, 20, 60, "PAYMENT", shipment?.payment ?? "Unpaid");
+  lv(doc, 80, 60, "DATE", order.order_date ?? "—");
 
-  // order line items
   const ch = chargeable(
     { l: +order.dim_l_cm, w: +order.dim_w_cm, h: +order.dim_h_cm },
     +order.weight_kg, courier?.divisor ?? 5000
   );
   const rate = +order.price_per_kg || customer?.rate_per_kg || 0;
 
-  doc.autoTable({
+  const tbl = autoTable(doc, {
     startY: 76,
     head: [["Description", "Qty", "Chargeable", "Rate/kg", "Amount"]],
     body: [[
-      `${order.product}\n${ch.basis} weight · ${courier?.name ?? ""} ÷${courier?.divisor ?? ""}`,
+      `${order.product} — ${ch.basis} weight, ${courier?.name ?? ""} div${courier?.divisor ?? ""}`,
       String(order.qty),
       `${ch.charged.toFixed(1)} kg`,
       fmtIDR(rate),
@@ -60,36 +57,33 @@ export function generateInvoicePDF(order, customer, shipment, courier, fx) {
     theme: "grid",
   });
 
-  const finalY = doc.lastAutoTable.finalY + 10;
+  const fy = (tbl?.finalY ?? 100) + 10;
   doc.setFontSize(12); doc.setFont("helvetica", "bold"); doc.setTextColor(...INK);
-  doc.text("Total due", 20, finalY);
+  doc.text("Total due", 20, fy);
   doc.setTextColor(...ACCENT);
-  doc.text(fmtIDR(+order.sell_idr), 190, finalY, { align: "right" });
-
+  doc.text(fmtIDR(+order.sell_idr), 190, fy, { align: "right" });
   doc.setFontSize(9); doc.setFont("helvetica", "normal"); doc.setTextColor(...GRAY);
-  doc.text("Payment in IDR within 14 days · Bank transfer to JEI account", 20, finalY + 8);
-
+  doc.text("Payment in IDR within 14 days. Bank transfer to JEI account.", 20, fy + 8);
   return doc;
 }
 
-// ── QUOTATION PDF ──
-export function generateQuotationPDF({ customerName, weight, dims, divisor, courierName, ratePerKg, currency, fx }) {
+export function generateQuotationPDF({ customerName, weight, dims, divisor, courierName, ratePerKg }) {
   const doc = new jsPDF();
   header(doc, "QUOTATION", `QT-${Date.now().toString(36).toUpperCase()}`);
 
-  labelValue(doc, 20, 46, "CUSTOMER", customerName || "—");
-  labelValue(doc, 80, 46, "COURIER", `${courierName} ÷${divisor}`);
-  labelValue(doc, 130, 46, "DATE", new Date().toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }));
+  lv(doc, 20, 46, "CUSTOMER", customerName || "—");
+  lv(doc, 80, 46, "COURIER", `${courierName} div${divisor}`);
+  lv(doc, 130, 46, "DATE", new Date().toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }));
 
   const ch = chargeable(dims, weight, divisor);
   const amount = ch.charged * ratePerKg;
 
-  doc.autoTable({
+  const tbl = autoTable(doc, {
     startY: 62,
     head: [["Detail", "Value"]],
     body: [
       ["Actual weight", `${weight.toFixed(2)} kg`],
-      ["Dimensions (L×W×H)", `${dims.l.toFixed(1)} × ${dims.w.toFixed(1)} × ${dims.h.toFixed(1)} cm`],
+      ["Dimensions (L x W x H)", `${dims.l.toFixed(1)} x ${dims.w.toFixed(1)} x ${dims.h.toFixed(1)} cm`],
       ["Volumetric weight", `${(dims.l * dims.w * dims.h / divisor).toFixed(2)} kg`],
       ["Basis", ch.basis + (ch.minApplied ? " (3 kg minimum applied)" : "")],
       ["Chargeable weight", `${ch.charged.toFixed(1)} kg`],
@@ -102,15 +96,13 @@ export function generateQuotationPDF({ customerName, weight, dims, divisor, cour
     theme: "grid",
   });
 
-  const finalY = doc.lastAutoTable.finalY + 12;
+  const fy = (tbl?.finalY ?? 140) + 12;
   doc.setFontSize(13); doc.setFont("helvetica", "bold"); doc.setTextColor(...INK);
-  doc.text("Estimated total", 20, finalY);
+  doc.text("Estimated total", 20, fy);
   doc.setTextColor(...ACCENT);
-  doc.text(fmtIDR(amount), 190, finalY, { align: "right" });
-
+  doc.text(fmtIDR(amount), 190, fy, { align: "right" });
   doc.setFontSize(9); doc.setFont("helvetica", "normal"); doc.setTextColor(...GRAY);
-  doc.text("This is an estimate. Final charges based on actual/volumetric weight at shipment.", 20, finalY + 8);
-  doc.text("Prices valid for 7 days from date of quotation.", 20, finalY + 14);
-
+  doc.text("This is an estimate. Final charges based on actual/volumetric weight at shipment.", 20, fy + 8);
+  doc.text("Prices valid for 7 days from date of quotation.", 20, fy + 14);
   return doc;
 }

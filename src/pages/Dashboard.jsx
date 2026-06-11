@@ -1,9 +1,11 @@
 import { useState, useMemo, useRef, useEffect } from "react";
-import { Package, Ship, Truck, Eye, EyeOff, Search, ChevronRight, AlertCircle, CheckCircle2, FileText, Calculator, Tag, LayoutGrid, Plus, Printer, LogOut, RefreshCw, Pencil, Boxes, Circle, CreditCard, ExternalLink, Copy, Check, Download, Users, DollarSign, TrendingUp } from "lucide-react";
+import { Package, Ship, Truck, Eye, EyeOff, Search, ChevronRight, AlertCircle, CheckCircle2, FileText, Calculator, Tag, LayoutGrid, Plus, Printer, LogOut, RefreshCw, Pencil, Boxes, Circle, CreditCard, ExternalLink, Copy, Check, Download, Upload, Users, DollarSign, TrendingUp } from "lucide-react";
 import { useAuth } from "../lib/auth";
 import { useJEIData, updateCustomerRate, addCustomer, setShipmentStage, setShipmentPayment, setShipmentTracking } from "../lib/data";
 import { chargeable, fmtIDR, fmtShort, toIDR, trackingUrl, MIN_KG, IN_TO_CM, LB_TO_KG } from "../lib/pricing";
 import { generateInvoicePDF, generateQuotationPDF } from "../lib/pdf";
+import { fetchLiveRates } from "../lib/fx";
+import { exportCSV, exportOrders } from "../lib/csv";
 import OrderForm from "../components/OrderForm";
 import CustomerData from "../components/CustomerData";
 import { LOGO } from "../lib/logo";
@@ -23,6 +25,9 @@ export default function Dashboard() {
   const { profile, isOwner, signOut } = useAuth();
   const D = useJEIData();
   const [tab, setTab] = useState("orders");
+  const [liveFx, setLiveFx] = useState(null);
+
+  useEffect(() => { fetchLiveRates().then(setLiveFx); }, []);
 
   if (D.loading) return <Center>Loading JEI data…</Center>;
   if (D.error) return <Center>Couldn't load data: {D.error}</Center>;
@@ -39,7 +44,7 @@ export default function Dashboard() {
     const div = courierOf(s?.courier_id)?.divisor ?? 5000;
     const { vol, charged, basis, minApplied } = chargeable(
       { l:o.dim_l_cm, w:o.dim_w_cm, h:o.dim_h_cm }, o.weight_kg, div);
-    const rate = custRate(o.customer_id);
+    const rate = Number(o.price_per_kg) || custRate(o.customer_id);
     return { vol, charged, basis, minApplied, rate, price: charged*rate, divisor: div };
   };
   const shipCostIDR = (sid) => costsFor(sid).reduce((a,c)=>a+toIDR(c.amount,c.currency,D.fx),0);
@@ -49,7 +54,7 @@ export default function Dashboard() {
     return shipCostIDR(o.shipment_id) * (Number(o.sell_idr)/tot);
   };
 
-  const ctx = { D, isOwner, custName, custRate, courierOf, shipmentOf, costsFor, quote, orderCostIDR, shipCostIDR, reload: D.reload };
+  const ctx = { D, isOwner, custName, custRate, courierOf, shipmentOf, costsFor, quote, orderCostIDR, shipCostIDR, reload: D.reload, liveFx };
   const TABS = [
     {k:"orders",label:"Orders",icon:LayoutGrid},
     {k:"shipments",label:"Shipments",icon:Boxes},
@@ -68,6 +73,11 @@ export default function Dashboard() {
           <div style={S.brandSub}>US → Singapore → Indonesia · order, pricing &amp; billing</div></div>
         </div>
         <div style={{display:"flex",alignItems:"center",gap:12}}>
+          {liveFx && <span style={S.fxBar}>
+            <DollarSign size={12}/>
+            USD/IDR {liveFx.usd_idr?.toLocaleString()} · SGD/IDR {liveFx.sgd_idr?.toLocaleString()}
+            {!liveFx.live && <span style={{color:"var(--warn)"}}> (offline)</span>}
+          </span>}
           <span style={S.who}>
             {isOwner ? <Eye size={13}/> : <EyeOff size={13}/>}
             {profile?.full_name ?? "User"} · {isOwner ? "Owner" : "Admin"}
@@ -129,6 +139,7 @@ function Orders({ctx}){
     </section>
     <div style={{display:"flex",gap:10,marginBottom:14,flexWrap:"wrap"}}>
       <div style={{...S.searchWrap,flex:1,marginBottom:0}}><Search size={15} style={{opacity:.5}}/><input style={S.search} placeholder="Search orders, customers, products…" value={q} onChange={e=>setQ(e.target.value)}/></div>
+      <button style={S.secBtn} onClick={()=>exportCSV(exportOrders(D.orders,D.customers),"jei-orders.csv")}><Download size={13}/> Export CSV</button>
       <button style={S.primaryBtn} onClick={openNew}><Plus size={15}/> New order</button>
     </div>
     <div style={S.card}>
@@ -181,21 +192,23 @@ function Shipments({ctx}){
   async function advance(sid,stage){setBusy(sid+stage);await setShipmentStage(sid,stage);await reload();setBusy(null);}
   async function setPay(sid,payment){setBusy(sid+payment);await setShipmentPayment(sid,payment);await reload();setBusy(null);}
 
-  const list=D.shipments
+  // Only show shipments that have at least one order
+  const activeShipments=D.shipments.filter(s=>D.orders.some(o=>o.shipment_id===s.id));
+  const list=activeShipments
     .filter(s=>[s.id,s.stage,s.payment].join(" ").toLowerCase().includes(q.toLowerCase()))
     .sort((a,b)=>a.id<b.id?1:-1);
 
   // unpaid-but-delivered = money owed
-  const owed=D.shipments.filter(s=>s.stage==="Delivered to customer"&&s.payment!=="Paid").length;
+  const owed=activeShipments.filter(s=>s.stage==="Delivered to customer"&&s.payment!=="Paid").length;
 
   return(<>
     <div style={S.sectionLead}><h2 style={S.h2}>Shipments</h2>
       <p style={S.lead}>Update each shipment as it hits a checkpoint. Payment is tracked separately, so you can always see what's delivered but not yet paid.</p></div>
     <section style={S.kpis}>
-      <Kpi label="Total shipments" value={D.shipments.length} sub="all time"/>
-      <Kpi label="In transit" value={D.shipments.filter(s=>s.stage!=="Delivered to customer").length} sub="not yet delivered"/>
+      <Kpi label="Total shipments" value={activeShipments.length} sub="with orders"/>
+      <Kpi label="In transit" value={activeShipments.filter(s=>s.stage!=="Delivered to customer").length} sub="not yet delivered"/>
       <Kpi label="Delivered, unpaid" value={owed} sub="money owed" warn={owed>0}/>
-      <Kpi label="Paid" value={D.shipments.filter(s=>s.payment==="Paid").length} sub="settled"/>
+      <Kpi label="Paid" value={activeShipments.filter(s=>s.payment==="Paid").length} sub="settled"/>
     </section>
     <div style={S.searchWrap}><Search size={15} style={{opacity:.5}}/><input style={S.search} placeholder="Search shipments…" value={q} onChange={e=>setQ(e.target.value)}/></div>
 
@@ -578,6 +591,7 @@ const S={
   brandName:{fontFamily:"var(--display)",fontWeight:800,letterSpacing:".14em",fontSize:15},
   brandSub:{fontSize:12,color:"var(--ink-3)",marginTop:1},
   who:{display:"flex",alignItems:"center",gap:6,fontSize:13,fontWeight:600,color:"var(--ink-2)",background:"var(--card)",padding:"7px 12px",borderRadius:10,border:"1px solid var(--line)"},
+  fxBar:{display:"flex",alignItems:"center",gap:5,background:"var(--head)",border:"1px solid var(--line)",borderRadius:10,padding:"6px 12px",fontSize:11.5,fontWeight:600,color:"var(--ink-3)"},
   icoBtn:{display:"grid",placeItems:"center",width:34,height:34,border:"1px solid var(--line)",background:"var(--card)",borderRadius:9,cursor:"pointer",color:"var(--ink-2)"},
   tabs:{display:"flex",gap:4,marginBottom:20,borderBottom:"1px solid var(--line)"},
   kpis:{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:12,marginBottom:20},
@@ -588,6 +602,7 @@ const S={
   searchWrap:{display:"flex",alignItems:"center",gap:8,background:"var(--card)",border:"1px solid var(--line)",borderRadius:11,padding:"9px 13px",marginBottom:14},
   search:{border:"none",outline:"none",background:"transparent",flex:1,fontSize:14,color:"var(--ink)",fontFamily:"var(--body)"},
   primaryBtn:{display:"flex",alignItems:"center",gap:6,background:"var(--accent)",color:"#fff",border:"none",borderRadius:11,padding:"0 18px",fontSize:14,fontWeight:700,cursor:"pointer",fontFamily:"var(--body)"},
+  secBtn:{display:"flex",alignItems:"center",gap:5,background:"var(--card)",border:"1px solid var(--line)",color:"var(--ink-2)",borderRadius:10,padding:"9px 13px",fontSize:12.5,fontWeight:600,cursor:"pointer",fontFamily:"var(--body)"},
   iconMini:{display:"grid",placeItems:"center",width:30,height:30,border:"1px solid var(--line)",background:"var(--card)",borderRadius:8,cursor:"pointer",color:"var(--ink-2)"},
   linkBtn:{border:"none",background:"transparent",color:"var(--accent)",fontWeight:700,cursor:"pointer",fontFamily:"var(--body)",fontSize:"inherit",padding:0,textDecoration:"underline"},
   shipCard:{background:"var(--card)",border:"1px solid var(--line)",borderRadius:14,padding:18},

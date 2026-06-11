@@ -1,18 +1,20 @@
-import { useState, useMemo } from "react";
-import { Search, Plus, Pencil, Trash2, Check, X, Users } from "lucide-react";
+import { useState, useMemo, useRef } from "react";
+import { Search, Plus, Pencil, Trash2, Check, X, Users, Download, Upload } from "lucide-react";
 import { updateCustomer, addCustomerFull, deleteCustomer } from "../lib/data";
+import { exportCSV, parseCSV, exportCustomers } from "../lib/csv";
 import ConfirmDialog from "./ConfirmDialog";
 
 const FIELDS = [
   { key: "name", label: "Name", required: true },
   { key: "states", label: "States" },
   { key: "shipping_mark", label: "Shipping Mark" },
-  { key: "contact_number", label: "Contact" },
+  { key: "contact_person", label: "Contact Person" },
+  { key: "contact_number", label: "Contact Number" },
   { key: "address", label: "Address" },
   { key: "rate_per_kg", label: "Rate/kg (IDR)", type: "number" },
 ];
 
-const empty = () => ({ name: "", states: "", shipping_mark: "", contact_number: "", address: "", rate_per_kg: 0 });
+const empty = () => ({ name: "", states: "", shipping_mark: "", contact_person: "", contact_number: "", address: "", rate_per_kg: 0 });
 
 export default function CustomerData({ ctx }) {
   const { D, reload } = ctx;
@@ -23,10 +25,40 @@ export default function CustomerData({ ctx }) {
   const [newData, setNewData] = useState(empty());
   const [confirmDel, setConfirmDel] = useState(null);
   const [busy, setBusy] = useState(false);
+  const fileRef = useRef(null);
+
+  function handleExport() {
+    exportCSV(exportCustomers(D.customers), "jei-customers.csv");
+  }
+  async function handleImport(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const text = await file.text();
+    const rows = parseCSV(text);
+    setBusy(true);
+    for (const r of rows) {
+      if (!r.name?.trim()) continue;
+      const existing = D.customers.find(c => c.name.toLowerCase() === r.name.trim().toLowerCase());
+      if (existing) {
+        await updateCustomer(existing.id, {
+          states: r.states || existing.states, shipping_mark: r.shipping_mark || existing.shipping_mark,
+          contact_person: r.contact_person || existing.contact_person, contact_number: r.contact_number || existing.contact_number,
+          address: r.address || existing.address, rate_per_kg: +r.rate_per_kg || existing.rate_per_kg,
+        });
+      } else {
+        await addCustomerFull({ name: r.name.trim(), states: r.states || "", shipping_mark: r.shipping_mark || "",
+          contact_person: r.contact_person || "", contact_number: r.contact_number || "", address: r.address || "",
+          rate_per_kg: +r.rate_per_kg || 0 });
+      }
+    }
+    await reload();
+    setBusy(false);
+    e.target.value = "";
+  }
 
   const list = useMemo(() =>
     D.customers.filter(c =>
-      [c.name, c.states, c.shipping_mark, c.contact_number, c.address]
+      [c.name, c.states, c.shipping_mark, c.contact_person, c.contact_number, c.address]
         .join(" ").toLowerCase().includes(q.toLowerCase())
     ), [q, D.customers]);
 
@@ -64,6 +96,7 @@ export default function CustomerData({ ctx }) {
       name: c.name || "",
       states: c.states || "",
       shipping_mark: c.shipping_mark || "",
+      contact_person: c.contact_person || "",
       contact_number: c.contact_number || "",
       address: c.address || "",
       rate_per_kg: c.rate_per_kg || 0,
@@ -81,7 +114,12 @@ export default function CustomerData({ ctx }) {
 
     <div style={S.topRow}>
       <div style={S.searchWrap}><Search size={15} style={{ opacity: .5 }} /><input style={S.search} placeholder="Search customers…" value={q} onChange={e => setQ(e.target.value)} /></div>
-      <button style={S.addBtn} onClick={() => setAdding(true)}><Plus size={14} /> Add customer</button>
+      <div style={{ display: "flex", gap: 6 }}>
+        <button style={S.secBtn} onClick={handleExport}><Download size={13} /> Export CSV</button>
+        <button style={S.secBtn} onClick={() => fileRef.current?.click()}><Upload size={13} /> Import CSV</button>
+        <input ref={fileRef} type="file" accept=".csv" style={{ display: "none" }} onChange={handleImport} />
+        <button style={S.addBtn} onClick={() => setAdding(true)}><Plus size={14} /> Add customer</button>
+      </div>
     </div>
 
     {/* add new customer row */}
@@ -178,6 +216,7 @@ const S = {
   searchWrap: { display: "flex", alignItems: "center", gap: 8, flex: 1, maxWidth: 320 },
   search: { flex: 1, border: "1px solid var(--line)", borderRadius: 9, padding: "8px 11px", fontSize: 14, fontFamily: "var(--body)", background: "var(--head)", color: "var(--ink)", outline: "none" },
   addBtn: { display: "flex", alignItems: "center", gap: 6, background: "var(--accent)", color: "#fff", border: "none", borderRadius: 10, padding: "10px 16px", fontSize: 13.5, fontWeight: 700, cursor: "pointer", fontFamily: "var(--body)" },
+  secBtn: { display: "flex", alignItems: "center", gap: 5, background: "var(--card)", border: "1px solid var(--line)", color: "var(--ink-2)", borderRadius: 10, padding: "9px 13px", fontSize: 12.5, fontWeight: 600, cursor: "pointer", fontFamily: "var(--body)" },
   card: { background: "var(--card)", border: "1px solid var(--line)", borderRadius: 14, padding: 18 },
   cardTop: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 },
   cardTitle: { fontFamily: "var(--display)", fontWeight: 700, fontSize: 15, color: "var(--ink)" },
