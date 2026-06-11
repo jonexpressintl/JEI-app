@@ -347,9 +347,13 @@ function QuoteCalc({ctx}){
   const [custName,setCustName]=useState("");
   const [custId,setCustId]=useState("");
   const [ratePerKg,setRate]=useState(0);
+  const [rateCur,setRateCur]=useState("IDR");
   const [courier,setCourier]=useState(D.couriers[0]?.id??"");
-  const [unit,setUnit]=useState("metric");
-  const [l,setL]=useState(80),[w,setW]=useState(60),[h,setH]=useState(55),[wt,setWt]=useState(62);
+  const [pkgs,setPkgs]=useState([{weight:62,l:80,w:60,h:55,unit:"metric"}]);
+
+  function setPkg(i,k,v){const p=[...pkgs];p[i]={...p[i],[k]:v};setPkgs(p);}
+  function addPkg(){setPkgs([...pkgs,{weight:0,l:0,w:0,h:0,unit:"metric"}]);}
+  function removePkg(i){if(pkgs.length>1)setPkgs(pkgs.filter((_,j)=>j!==i));}
 
   // autocomplete
   const matches=useMemo(()=>{
@@ -362,61 +366,86 @@ function QuoteCalc({ctx}){
     const h=(e)=>{if(ddRef.current&&!ddRef.current.contains(e.target))setDdOpen(false);};
     document.addEventListener("mousedown",h);return()=>document.removeEventListener("mousedown",h);
   },[]);
-  function pickCust(c){setCustName(c.name);setCustId(c.id);setRate(c.rate_per_kg||0);setDdOpen(false);}
+  function pickCust(c){setCustName(c.name);setCustId(c.id);setRate(c.rate_per_kg||0);setRateCur(c.rate_currency||"IDR");setDdOpen(false);}
 
-  const r=useMemo(()=>{
-    const lc=unit==="imperial"?{l:l*IN_TO_CM,w:w*IN_TO_CM,h:h*IN_TO_CM}:{l:+l,w:+w,h:+h};
-    const wkg=unit==="imperial"?wt*LB_TO_KG:+wt;
-    const div=courierOf(courier)?.divisor??5000;
-    const {vol,charged,basis,minApplied}=chargeable(lc,wkg,div);
-    return{wkg,lc,div,vol,charged,basis,minApplied,rate:+ratePerKg,price:charged*(+ratePerKg)};
-  },[ratePerKg,courier,unit,l,w,h,wt]);
+  const div=courierOf(courier)?.divisor??5000;
+  const details=useMemo(()=>{
+    return pkgs.map(p=>{
+      const u=p.unit||"metric";
+      const wkg=u==="imperial"?+p.weight*LB_TO_KG:+p.weight;
+      const lc={l:u==="imperial"?+p.l*IN_TO_CM:+p.l,w:u==="imperial"?+p.w*IN_TO_CM:+p.w,h:u==="imperial"?+p.h*IN_TO_CM:+p.h};
+      const ch=chargeable(lc,wkg,div);
+      return{...ch,wkg,lc};
+    });
+  },[pkgs,div]);
+  const totalCharged=details.reduce((a,d)=>a+d.charged,0);
+  const totalPrice=totalCharged*(+ratePerKg);
+
+  const fmtPrice=(n)=>rateCur==="USD"?`$${Number(n).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}`:fmtIDR(n);
 
   function downloadPDF(){
     const c=courierOf(courier);
-    const doc=generateQuotationPDF({
-      customerName:custName||"Customer",weight:r.wkg,
-      dims:r.lc,divisor:r.div,courierName:c?.name??"",
-      ratePerKg:+ratePerKg,currency:"IDR",fx:D.fx_rates?.[0]
-    });
+    const metricPkgs=pkgs.map(p=>{const u=p.unit||"metric";return{weight:u==="imperial"?+p.weight*LB_TO_KG:+p.weight,l:u==="imperial"?+p.l*IN_TO_CM:+p.l,w:u==="imperial"?+p.w*IN_TO_CM:+p.w,h:u==="imperial"?+p.h*IN_TO_CM:+p.h};});
+    const doc=generateQuotationPDF({customerName:custName||"Customer",packages:metricPkgs,divisor:div,courierName:c?.name??"",ratePerKg:+ratePerKg,priceCurrency:rateCur});
     doc.save(`quotation-${custName||"customer"}.pdf`);
   }
 
-  const In=(label,val,set,suffix)=>(
-    <label style={S.field}><span style={S.fLabel}>{label}</span>
-      <div style={S.inputWrap}><input type="number" value={val} onChange={e=>set(e.target.value)} style={{...S.input,border:"none",background:"transparent"}}/><span style={S.suffix}>{suffix}</span></div></label>);
   return(
     <div style={{...S.card,padding:18,marginBottom:18}}>
-      <div style={S.calcHead}><Calculator size={16}/><span style={{fontWeight:700}}>Live quote calculator</span>
-        <div style={{marginLeft:"auto",display:"flex",gap:6}}>
-          <button className={"seg "+(unit==="metric"?"on":"")} onClick={()=>setUnit("metric")}>cm / kg</button>
-          <button className={"seg "+(unit==="imperial"?"on":"")} onClick={()=>setUnit("imperial")}>in / lb</button></div></div>
-      <div style={S.calcGrid}>
+      <div style={S.calcHead}><Calculator size={16}/><span style={{fontWeight:700}}>Live quote calculator</span></div>
+
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}>
         <div ref={ddRef} style={{position:"relative"}}>
           <label style={S.field}><span style={S.fLabel}>Customer</span>
             <input style={S.input} value={custName} onChange={e=>{setCustName(e.target.value);setCustId("");setDdOpen(true);}}
               onFocus={()=>setDdOpen(true)} placeholder="Type customer name…" autoComplete="off"/></label>
           {ddOpen&&<div style={{position:"absolute",top:"100%",left:0,right:0,background:"var(--card)",border:"1px solid var(--line)",borderRadius:10,maxHeight:150,overflowY:"auto",zIndex:10,boxShadow:"0 8px 24px rgba(0,0,0,.12)"}}>
-            {matches.map(c=>(<button key={c.id} style={{display:"flex",justifyContent:"space-between",width:"100%",padding:"9px 12px",border:"none",background:"transparent",cursor:"pointer",fontFamily:"var(--body)",fontSize:13,textAlign:"left",borderBottom:"1px solid var(--line)"}} onClick={()=>pickCust(c)}><span style={{fontWeight:600}}>{c.name}</span><span style={{fontSize:12,color:"var(--ink-3)"}}>{c.rate_per_kg?`${(c.rate_per_kg/1000).toFixed(0)}k/kg`:""}</span></button>))}
+            {matches.map(c=>(<button key={c.id} style={{display:"flex",justifyContent:"space-between",width:"100%",padding:"9px 12px",border:"none",background:"transparent",cursor:"pointer",fontFamily:"var(--body)",fontSize:13,textAlign:"left",borderBottom:"1px solid var(--line)"}} onClick={()=>pickCust(c)}><span style={{fontWeight:600}}>{c.name}</span><span style={{fontSize:12,color:"var(--ink-3)"}}>{c.rate_per_kg?`${c.rate_currency==="USD"?"$":""}${(c.rate_per_kg).toLocaleString()}/kg`:""}</span></button>))}
             {matches.length===0&&<div style={{padding:"9px 12px",fontSize:13,color:"var(--ink-3)"}}>No matches</div>}
           </div>}
         </div>
         <label style={S.field}><span style={S.fLabel}>Courier</span>
           <select value={courier} onChange={e=>setCourier(e.target.value)} style={S.input}>{D.couriers.map(c=><option key={c.id} value={c.id}>{c.name} (÷{c.divisor})</option>)}</select></label>
-        {In("Length",l,setL,unit==="imperial"?"in":"cm")}{In("Width",w,setW,unit==="imperial"?"in":"cm")}
-        {In("Height",h,setH,unit==="imperial"?"in":"cm")}{In("Actual weight",wt,setWt,unit==="imperial"?"lb":"kg")}
-        <label style={S.field}><span style={S.fLabel}>Rate per kg (IDR)</span>
-          <input type="number" value={ratePerKg} onChange={e=>setRate(e.target.value)} style={S.input}/></label>
       </div>
+
+      {/* packages */}
+      <div style={{fontSize:11,fontWeight:700,color:"var(--ink-3)",letterSpacing:".04em",marginBottom:6,display:"flex",justifyContent:"space-between"}}>
+        <span>PACKAGES ({pkgs.length})</span>
+        <button onClick={addPkg} style={{background:"transparent",border:"none",color:"var(--accent)",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"var(--body)"}}><Plus size={12}/> ADD PACKAGE</button>
+      </div>
+      {pkgs.map((p,i)=>{const u=p.unit||"metric";return(
+        <div key={i} style={{display:"flex",alignItems:"center",gap:6,marginBottom:8,background:"var(--head)",border:"1px solid var(--line)",borderRadius:9,padding:"8px 10px"}}>
+          <span style={{fontSize:12,color:"var(--ink-3)",fontWeight:700,width:20}}>{i+1}</span>
+          <input type="number" value={p.weight} onChange={e=>setPkg(i,"weight",e.target.value)} style={{...S.input,width:70,textAlign:"center"}} placeholder="0"/>
+          <select value={u} onChange={e=>{setPkg(i,"unit",e.target.value);}} style={{...S.input,width:45,padding:"7px 2px",fontSize:12}}><option value="metric">kg</option><option value="imperial">lb</option></select>
+          <input type="number" value={p.l} onChange={e=>setPkg(i,"l",e.target.value)} style={{...S.input,width:55,textAlign:"center"}} placeholder="L"/>
+          <span style={{color:"var(--ink-3)"}}>×</span>
+          <input type="number" value={p.w} onChange={e=>setPkg(i,"w",e.target.value)} style={{...S.input,width:55,textAlign:"center"}} placeholder="W"/>
+          <span style={{color:"var(--ink-3)"}}>×</span>
+          <input type="number" value={p.h} onChange={e=>setPkg(i,"h",e.target.value)} style={{...S.input,width:55,textAlign:"center"}} placeholder="H"/>
+          <select value={u} onChange={e=>setPkg(i,"unit",e.target.value)} style={{...S.input,width:45,padding:"7px 2px",fontSize:12}}><option value="metric">cm</option><option value="imperial">in</option></select>
+          {pkgs.length>1&&<button onClick={()=>removePkg(i)} style={{background:"transparent",border:"none",color:"var(--bad)",cursor:"pointer"}}><Trash2 size={14}/></button>}
+        </div>
+      );})}
+
+      {/* rate per kg with currency */}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginTop:10}}>
+        <label style={S.field}><span style={S.fLabel}>Rate per kg</span>
+          <div style={{display:"flex",gap:6}}>
+            <input type="number" value={ratePerKg} onChange={e=>setRate(e.target.value)} style={{...S.input,flex:1}}/>
+            <select value={rateCur} onChange={e=>setRateCur(e.target.value)} style={{...S.input,width:70}}><option value="IDR">IDR</option><option value="USD">USD</option></select>
+          </div></label>
+      </div>
+
       <div style={S.resultRow}>
-        <ResCell label="Actual (metric)" value={`${r.wkg.toFixed(1)} kg`} dim={r.basis!=="actual"||r.minApplied}/>
-        <ResCell label="Volumetric" value={`${r.vol.toFixed(1)} kg`} dim={r.basis!=="volumetric"||r.minApplied} note={`÷${r.div}`}/>
-        <ResCell label="Charged kg" value={`${r.charged.toFixed(1)} kg`} highlight note={r.minApplied?"min 3kg":r.basis}/>
-        <ResCell label="Rate" value={`${fmtIDR(r.rate)}/kg`}/>
-        <ResCell label="Quoted price" value={fmtIDR(r.price)} big/>
+        <ResCell label="Total actual" value={`${details.reduce((a,d)=>a+d.wkg,0).toFixed(1)} kg`}/>
+        <ResCell label="Total volumetric" value={`${details.reduce((a,d)=>a+d.vol,0).toFixed(1)} kg`} note={`÷${div}`}/>
+        <ResCell label="Charged" value={`${totalCharged.toFixed(1)} kg`} highlight/>
+        <ResCell label="Rate" value={`${fmtPrice(+ratePerKg)}/kg`}/>
+        <ResCell label="Quoted price" value={fmtPrice(totalPrice)} big/>
       </div>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:10}}>
-        <p style={S.calcFoot}>Charged weight = max(actual, volumetric), floored at 3 kg.</p>
+        <p style={S.calcFoot}>Charged = max(actual, volumetric) per package, min 3 kg each. {pkgs.length} package{pkgs.length>1?"s":""}.</p>
         <button style={S.printBtn} onClick={downloadPDF}><Download size={13}/> Download PDF</button>
       </div>
     </div>);

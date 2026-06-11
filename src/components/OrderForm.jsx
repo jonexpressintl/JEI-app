@@ -112,13 +112,16 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
         const { error } = await addShipment({ id: shipmentId, courier_id: f.new_courier, stage: "Package received in US", eta_id: f.new_eta || null });
         if (error) throw error;
       }
+      const quoteAmt = totalCharged * (+f.price_per_kg);
+      const fx = ctx.liveFx ?? { usd_idr: 15850 };
+      const sellIdr = f.price_currency === "USD" ? Math.round(quoteAmt * fx.usd_idr) : Math.round(quoteAmt);
       const payload = {
         customer_id: customerId, shipment_id: shipmentId,
         product: f.product.trim(), qty: +f.qty,
         weight_kg: metricPkgs[0]?.weight || 0,
         dim_l_cm: metricPkgs[0]?.l || 0, dim_w_cm: metricPkgs[0]?.w || 0, dim_h_cm: metricPkgs[0]?.h || 0,
         packages: metricPkgs,
-        sell_idr: +f.sell_idr, sell_currency: f.sell_currency,
+        sell_idr: sellIdr, sell_currency: f.price_currency,
         price_per_kg: +f.price_per_kg, price_currency: f.price_currency,
         order_date: f.order_date,
       };
@@ -184,33 +187,48 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
           {step === 2 && (<>
             <Field label="Product"><input style={S.input} value={f.product} onChange={set("product")} placeholder="e.g. Hydraulic pump" /></Field>
 
-            {/* packages with per-package units */}
-            <div style={{ fontSize: 12, fontWeight: 700, color: "var(--ink-3)", marginBottom: 6, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <span>PACKAGES ({f.packages.length})</span>
-              <button style={S.togOff} onClick={addPkg}><Plus size={12} /> Add package</button>
+            {/* packages — FedEx-style clean layout */}
+            <div style={S.pkgHeader}>
+              <span style={{flex:"0 0 30px"}}></span>
+              <span style={S.pkgColLabel}>PACKAGES *</span>
+              <span style={S.pkgColLabel}>WEIGHT *</span>
+              <span style={{...S.pkgColLabel,flex:3,textAlign:"center"}}>DIMENSIONS  L × W × H</span>
+              <span style={{width:28}}></span>
             </div>
-            {f.packages.map((p, i) => (
-              <div key={i} style={S.pkgRow}>
-                <span style={{ fontSize: 11, color: "var(--ink-3)", fontWeight: 700, minWidth: 20 }}>#{i + 1}</span>
-                <select style={{ ...S.pkgInput, width: 52 }} value={p.unit || "metric"} onChange={e => setPkg(i, "unit", e.target.value)}>
-                  <option value="metric">kg</option>
-                  <option value="imperial">lb</option>
-                </select>
-                <input style={S.pkgInput} type="number" placeholder={p.unit === "imperial" ? "lbs" : "kg"} value={p.weight} onChange={e => setPkg(i, "weight", e.target.value)} title="Weight" />
-                <input style={S.pkgInput} type="number" placeholder="L" value={p.l} onChange={e => setPkg(i, "l", e.target.value)} />
-                <span style={{ color: "var(--ink-3)", fontSize: 12 }}>×</span>
-                <input style={S.pkgInput} type="number" placeholder="W" value={p.w} onChange={e => setPkg(i, "w", e.target.value)} />
-                <span style={{ color: "var(--ink-3)", fontSize: 12 }}>×</span>
-                <input style={S.pkgInput} type="number" placeholder="H" value={p.h} onChange={e => setPkg(i, "h", e.target.value)} />
-                <span style={{ fontSize: 11, color: "var(--ink-3)" }}>{p.unit === "imperial" ? "in" : "cm"}</span>
-                {f.packages.length > 1 && <button style={S.pkgDel} onClick={() => removePkg(i)}><Trash2 size={12} /></button>}
-              </div>
-            ))}
+            {f.packages.map((p, i) => {
+              const u = p.unit || "metric";
+              return (
+                <div key={i} style={S.pkgRow}>
+                  <span style={{flex:"0 0 30px",fontSize:12,color:"var(--ink-3)",fontWeight:700}}>{i+1}</span>
+                  <div style={S.pkgCell}>
+                    <input style={S.pkgInput} type="number" value={p.weight} onChange={e => setPkg(i, "weight", e.target.value)} placeholder="0" />
+                    <select style={S.pkgUnit} value={u} onChange={e => setPkg(i, "unit", e.target.value)}>
+                      <option value="metric">kg</option>
+                      <option value="imperial">lb</option>
+                    </select>
+                  </div>
+                  <div style={{...S.pkgCell,flex:3,gap:4}}>
+                    <input style={S.pkgDimInput} type="number" value={p.l} onChange={e => setPkg(i, "l", e.target.value)} placeholder="L" />
+                    <span style={S.pkgX}>×</span>
+                    <input style={S.pkgDimInput} type="number" value={p.w} onChange={e => setPkg(i, "w", e.target.value)} placeholder="W" />
+                    <span style={S.pkgX}>×</span>
+                    <input style={S.pkgDimInput} type="number" value={p.h} onChange={e => setPkg(i, "h", e.target.value)} placeholder="H" />
+                    <select style={S.pkgUnit} value={u} onChange={e => setPkg(i, "unit", e.target.value)}>
+                      <option value="metric">cm</option>
+                      <option value="imperial">in</option>
+                    </select>
+                  </div>
+                  {f.packages.length > 1 ? <button style={S.pkgDel} onClick={() => removePkg(i)}><Trash2 size={14} /></button> : <span style={{width:28}}/>}
+                </div>
+              );
+            })}
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+              <span style={{fontSize:12.5,color:"var(--ink-2)",fontWeight:600}}>Total packages: {f.packages.length}</span>
+              <button style={S.addPkgBtn} onClick={addPkg}><Plus size={13} /> ADD NEW PACKAGE</button>
+            </div>
 
-            <Field label="Qty (items)"><input style={S.input} type="number" value={f.qty} onChange={set("qty")} /></Field>
-
-            {/* price per kg with currency */}
             <div style={S.row2}>
+              <Field label="Qty (items)"><input style={S.input} type="number" value={f.qty} onChange={set("qty")} /></Field>
               <Field label="Price per kg">
                 <div style={{ display: "flex", gap: 6 }}>
                   <input style={{ ...S.input, flex: 1 }} type="number" value={f.price_per_kg} onChange={set("price_per_kg")} />
@@ -219,16 +237,6 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
                     <option value="USD">USD</option>
                   </select>
                 </div>
-              </Field>
-              <Field label="Sell price">
-                <div style={{ display: "flex", gap: 6 }}>
-                  <input style={{ ...S.input, flex: 1 }} type="number" value={f.sell_input} onChange={e => setSellInput(e.target.value)} />
-                  <select style={{ ...S.input, width: 75 }} value={f.sell_currency} onChange={e => setCurrency(e.target.value)}>
-                    <option value="IDR">IDR</option>
-                    <option value="USD">USD</option>
-                  </select>
-                </div>
-                {f.sell_currency === "USD" && <div style={S.fxNote}>≈ {fmtIDR(+f.sell_idr)}</div>}
               </Field>
             </div>
 
@@ -250,10 +258,10 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
               </select></Field>
             )}
 
-            {/* live quote */}
+            {/* live quote — currency matches price_currency */}
             <div style={S.quote}>
               <span>Charged: <b>{totalCharged.toFixed(1)} kg</b> ({f.packages.length} pkg{f.packages.length > 1 ? "s" : ""}, ÷{div})</span>
-              <span>Quote: <b style={{ color: "var(--accent)" }}>{fmtIDR(quote)}</b></span>
+              <span>Quote: <b style={{ color: "var(--accent)" }}>{f.price_currency === "USD" ? `$${quote.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}` : fmtIDR(quote)}</b></span>
             </div>
           </>)}
         </div>
@@ -352,7 +360,14 @@ const S = {
   saveBtn: { background: "var(--accent)", color: "#fff", border: "none", borderRadius: 9, padding: "9px 18px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "var(--body)" },
   dropdown: { position: "absolute", top: "100%", left: 0, right: 0, background: "var(--card)", border: "1px solid var(--line)", borderRadius: 10, marginTop: 4, maxHeight: 160, overflowY: "auto", zIndex: 10, boxShadow: "0 8px 24px rgba(0,0,0,.12)" },
   ddItem: { display: "flex", justifyContent: "space-between", width: "100%", padding: "10px 12px", border: "none", background: "transparent", cursor: "pointer", fontFamily: "var(--body)", fontSize: 13.5, textAlign: "left", borderBottom: "1px solid var(--line)" },
-  pkgRow: { display: "flex", alignItems: "center", gap: 6, marginBottom: 8, background: "var(--head)", border: "1px solid var(--line)", borderRadius: 9, padding: "8px 10px" },
-  pkgInput: { width: 58, border: "1px solid var(--line)", borderRadius: 7, padding: "7px 6px", fontSize: 13, fontFamily: "var(--body)", background: "var(--card)", color: "var(--ink)", outline: "none", textAlign: "center", boxSizing: "border-box" },
-  pkgDel: { display: "grid", placeItems: "center", background: "transparent", border: "none", color: "var(--bad)", cursor: "pointer", padding: 4 },
+  pkgRow: { display: "flex", alignItems: "center", gap: 8, marginBottom: 8, background: "var(--head)", border: "1px solid var(--line)", borderRadius: 9, padding: "10px 12px" },
+  pkgHeader: { display: "flex", alignItems: "center", gap: 8, padding: "0 12px", marginBottom: 6 },
+  pkgColLabel: { fontSize: 11, fontWeight: 700, color: "var(--ink-3)", letterSpacing: ".04em", flex: 1 },
+  pkgCell: { display: "flex", alignItems: "center", gap: 4, flex: 1 },
+  pkgInput: { width: "100%", flex: 1, border: "1px solid var(--line)", borderRadius: 7, padding: "8px 6px", fontSize: 13, fontFamily: "var(--body)", background: "var(--card)", color: "var(--ink)", outline: "none", textAlign: "center", boxSizing: "border-box" },
+  pkgDimInput: { width: "100%", flex: 1, border: "1px solid var(--line)", borderRadius: 7, padding: "8px 4px", fontSize: 13, fontFamily: "var(--body)", background: "var(--card)", color: "var(--ink)", outline: "none", textAlign: "center", boxSizing: "border-box" },
+  pkgUnit: { border: "1px solid var(--line)", borderRadius: 7, padding: "7px 2px", fontSize: 12, fontFamily: "var(--body)", background: "var(--card)", color: "var(--ink-3)", outline: "none", cursor: "pointer", width: 42, flexShrink: 0 },
+  pkgX: { color: "var(--ink-3)", fontSize: 13, fontWeight: 600, flexShrink: 0 },
+  pkgDel: { display: "grid", placeItems: "center", background: "transparent", border: "none", color: "var(--bad)", cursor: "pointer", padding: 4, width: 28, flexShrink: 0 },
+  addPkgBtn: { display: "flex", alignItems: "center", gap: 5, background: "transparent", border: "none", color: "var(--accent)", fontSize: 12, fontWeight: 700, letterSpacing: ".04em", cursor: "pointer", fontFamily: "var(--body)", padding: 0 },
 };
