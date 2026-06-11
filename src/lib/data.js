@@ -111,3 +111,7 @@ export const setShipmentPayment = (id, payment) =>
 // Save tracking numbers (per-leg). Pass only the fields you're changing.
 export const setShipmentTracking = (id, patch) =>
   supabase.from("shipments").update(patch).eq("id", id);
+
+// Mark an order as completed (archives it from active views)
+export const completeOrder = (id) =>
+  supabase.from("orders").update({ completed: true }).eq("id", id);

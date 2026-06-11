@@ -11,10 +11,12 @@ const FIELDS = [
   { key: "contact_person", label: "Contact Person" },
   { key: "contact_number", label: "Contact Number" },
   { key: "address", label: "Address" },
-  { key: "rate_per_kg", label: "Rate/kg (IDR)", type: "number" },
+  { key: "rate_per_kg", label: "Rate/kg", type: "number" },
+  { key: "rate_currency", label: "Rate Currency", type: "select", options: ["IDR", "USD"] },
+  { key: "notes", label: "Notes", type: "textarea" },
 ];
 
-const empty = () => ({ name: "", states: "", shipping_mark: "", contact_person: "", contact_number: "", address: "", rate_per_kg: 0 });
+const empty = () => ({ name: "", states: "", shipping_mark: "", contact_person: "", contact_number: "", address: "", rate_per_kg: 0, rate_currency: "IDR", notes: "" });
 
 export default function CustomerData({ ctx }) {
   const { D, reload } = ctx;
@@ -100,6 +102,8 @@ export default function CustomerData({ ctx }) {
       contact_number: c.contact_number || "",
       address: c.address || "",
       rate_per_kg: c.rate_per_kg || 0,
+      rate_currency: c.rate_currency || "IDR",
+      notes: c.notes || "",
     });
   }
 
@@ -127,12 +131,19 @@ export default function CustomerData({ ctx }) {
       <div style={S.card}>
         <div style={S.cardTitle}>New customer</div>
         <div style={S.grid}>
-          {FIELDS.map(f => (
-            <div key={f.key} style={S.fieldWrap}>
-              <label style={S.label}>{f.label}{f.required && " *"}</label>
-              <input style={S.input} type={f.type || "text"} value={newData[f.key]}
-                onChange={e => setNewData({ ...newData, [f.key]: e.target.value })}
-                placeholder={f.label} />
+          {FIELDS.map(fld => (
+            <div key={fld.key} style={S.fieldWrap}>
+              <label style={S.label}>{fld.label}{fld.required && " *"}</label>
+              {fld.type === "select" ? (
+                <select style={S.input} value={newData[fld.key]} onChange={e => setNewData({ ...newData, [fld.key]: e.target.value })}>
+                  {fld.options.map(o => <option key={o} value={o}>{o}</option>)}
+                </select>
+              ) : fld.type === "textarea" ? (
+                <textarea style={{ ...S.input, minHeight: 50 }} value={newData[fld.key]} onChange={e => setNewData({ ...newData, [fld.key]: e.target.value })} placeholder={fld.label} />
+              ) : (
+                <input style={S.input} type={fld.type || "text"} value={newData[fld.key]}
+                  onChange={e => setNewData({ ...newData, [fld.key]: e.target.value })} placeholder={fld.label} />
+              )}
             </div>
           ))}
         </div>
@@ -163,14 +174,26 @@ export default function CustomerData({ ctx }) {
               )}
             </div>
             <div style={S.grid}>
-              {FIELDS.filter(f => f.key !== "name").map(f => (
-                <div key={f.key} style={S.fieldWrap}>
-                  <label style={S.label}>{f.label}</label>
+              {FIELDS.filter(fld => fld.key !== "name").map(fld => (
+                <div key={fld.key} style={S.fieldWrap}>
+                  <label style={S.label}>{fld.label}</label>
                   {isEditing ? (
-                    <input style={S.input} type={f.type || "text"} value={d[f.key] ?? ""}
-                      onChange={e => setEditData({ ...editData, [f.key]: e.target.value })} />
+                    fld.type === "select" ? (
+                      <select style={S.input} value={d[fld.key] ?? ""} onChange={e => setEditData({ ...editData, [fld.key]: e.target.value })}>
+                        {fld.options.map(o => <option key={o} value={o}>{o}</option>)}
+                      </select>
+                    ) : fld.type === "textarea" ? (
+                      <textarea style={{ ...S.input, minHeight: 50 }} value={d[fld.key] ?? ""} onChange={e => setEditData({ ...editData, [fld.key]: e.target.value })} />
+                    ) : (
+                      <input style={S.input} type={fld.type || "text"} value={d[fld.key] ?? ""}
+                        onChange={e => setEditData({ ...editData, [fld.key]: e.target.value })} />
+                    )
                   ) : (
-                    <div style={S.value}>{f.key === "rate_per_kg" ? `Rp ${Number(c[f.key] || 0).toLocaleString()}` : (c[f.key] || "—")}</div>
+                    <div style={S.value}>{
+                      fld.key === "rate_per_kg" ? `${c.rate_currency === "USD" ? "$" : "Rp "}${Number(c[fld.key] || 0).toLocaleString()}/kg` :
+                      fld.key === "rate_currency" ? (c[fld.key] || "IDR") :
+                      (c[fld.key] || "—")
+                    }</div>
                   )}
                 </div>
               ))}

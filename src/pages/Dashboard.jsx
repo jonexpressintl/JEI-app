@@ -1,7 +1,7 @@
 import { useState, useMemo, useRef, useEffect } from "react";
 import { Package, Ship, Truck, Eye, EyeOff, Search, ChevronRight, AlertCircle, CheckCircle2, FileText, Calculator, Tag, LayoutGrid, Plus, Printer, LogOut, RefreshCw, Pencil, Boxes, Circle, CreditCard, ExternalLink, Copy, Check, Download, Upload, Users, DollarSign, TrendingUp } from "lucide-react";
 import { useAuth } from "../lib/auth";
-import { useJEIData, updateCustomerRate, addCustomer, setShipmentStage, setShipmentPayment, setShipmentTracking } from "../lib/data";
+import { useJEIData, updateCustomerRate, addCustomer, setShipmentStage, setShipmentPayment, setShipmentTracking, completeOrder } from "../lib/data";
 import { chargeable, fmtIDR, fmtShort, toIDR, trackingUrl, MIN_KG, IN_TO_CM, LB_TO_KG } from "../lib/pricing";
 import { generateInvoicePDF, generateQuotationPDF } from "../lib/pdf";
 import { fetchLiveRates } from "../lib/fx";
@@ -117,8 +117,8 @@ function Orders({ctx}){
   const [q,setQ]=useState(""); const [sel,setSel]=useState(null);
   const [formOpen,setFormOpen]=useState(false);
   const [editOrder,setEditOrder]=useState(null);
-  const list=useMemo(()=>D.orders.filter(o=>[o.id,custName(o.customer_id),o.product,o.shipment_id].join(" ").toLowerCase().includes(q.toLowerCase())),[q,D.orders]);
-  const t=useMemo(()=>{const rev=D.orders.reduce((a,o)=>a+Number(o.sell_idr),0);const cost=D.orders.reduce((a,o)=>a+orderCostIDR(o),0);const del=D.orders.filter(o=>shipmentOf(o.shipment_id)?.stage==="Delivered to customer").length;return{rev,cost,profit:rev-cost,del,fly:D.orders.length-del};},[D.orders]);
+  const list=useMemo(()=>D.orders.filter(o=>!o.completed).filter(o=>[o.id,custName(o.customer_id),o.product,o.shipment_id].join(" ").toLowerCase().includes(q.toLowerCase())),[q,D.orders]);
+  const t=useMemo(()=>{const active=D.orders.filter(o=>!o.completed);const rev=active.reduce((a,o)=>a+Number(o.sell_idr),0);const cost=active.reduce((a,o)=>a+orderCostIDR(o),0);const del=active.filter(o=>shipmentOf(o.shipment_id)?.stage==="Delivered to customer").length;return{rev,cost,profit:rev-cost,del,fly:active.length-del};},[D.orders]);
 
   const openNew=()=>{setEditOrder(null);setFormOpen(true);};
   const openEdit=(o)=>{setEditOrder(o);setFormOpen(true);};
@@ -460,21 +460,54 @@ function CourierTable({couriers}){
 
 // ──────────── INVOICES ────────────
 function Invoices({ctx}){
-  const {D,custName,shipmentOf}=ctx;
+  const {D,custName,shipmentOf,reload}=ctx;
+  const [q,setQ]=useState("");
+  const [showCompleted,setShowCompleted]=useState(false);
   const delivered=D.orders.filter(o=>shipmentOf(o.shipment_id)?.stage==="Delivered to customer");
-  const [openId,setOpen]=useState(delivered[0]?.id??null);
+  const active=delivered.filter(o=>!o.completed);
+  const completed=delivered.filter(o=>o.completed);
+  const list=showCompleted?completed:active;
+  const filtered=list.filter(o=>[o.id,custName(o.customer_id),o.product].join(" ").toLowerCase().includes(q.toLowerCase()));
+  const [openId,setOpen]=useState(null);
+
+  async function handleComplete(orderId){
+    await completeOrder(orderId);
+    setOpen(null);
+    reload();
+  }
+
   return(<>
     <div style={S.sectionLead}><h2 style={S.h2}>Invoices</h2>
-      <p style={S.lead}>Delivered orders are billable. Each invoice pulls the chargeable weight and rate from the same pricing engine, so the bill always matches the quote.</p></div>
-    {delivered.length===0 && <div style={S.empty}>No delivered orders yet.</div>}
-    <div style={S.invList}>
-      {delivered.map(o=>(<button key={o.id} onClick={()=>setOpen(o.id)} className={"invchip "+(openId===o.id?"on":"")}><FileText size={13}/> {custName(o.customer_id)} · {o.id}</button>))}
+      <p style={S.lead}>Delivered orders are billable. Complete an invoice to archive it from active views.</p></div>
+    <div style={{display:"flex",gap:10,marginBottom:14,flexWrap:"wrap",alignItems:"center"}}>
+      <div style={{...S.searchWrap,flex:1,maxWidth:320,marginBottom:0}}><Search size={15} style={{opacity:.5}}/><input style={S.search} placeholder="Search invoices…" value={q} onChange={e=>setQ(e.target.value)}/></div>
+      <div style={{display:"flex",gap:6}}>
+        <button className={"seg "+(!showCompleted?"on":"")} onClick={()=>{setShowCompleted(false);setOpen(null);}}>Active ({active.length})</button>
+        <button className={"seg "+(showCompleted?"on":"")} onClick={()=>{setShowCompleted(true);setOpen(null);}}>Completed ({completed.length})</button>
+      </div>
     </div>
-    {openId && <InvoiceDoc ctx={ctx} order={delivered.find(o=>o.id===openId)}/>}
+    {filtered.length===0 && <div style={S.empty}>{showCompleted?"No completed invoices.":"No active invoices."}</div>}
+    <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:14}}>
+      {filtered.map(o=>{const s=shipmentOf(o.shipment_id);return(
+        <button key={o.id} onClick={()=>setOpen(openId===o.id?null:o.id)} style={{...S.shipCard,padding:"12px 16px",display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer",border:openId===o.id?"2px solid var(--accent)":"1px solid var(--line)",background:openId===o.id?"var(--good-bg)":"var(--card)"}}>
+          <div style={{display:"flex",alignItems:"center",gap:10}}>
+            <FileText size={15} style={{color:"var(--accent)"}}/>
+            <span style={{fontFamily:"var(--mono)",fontWeight:700,fontSize:13}}>{o.id}</span>
+            <span style={{fontWeight:600}}>{custName(o.customer_id)}</span>
+            <span style={{fontSize:12.5,color:"var(--ink-3)"}}>{o.product}</span>
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:8}}>
+            <span className={"paybadge pay-"+(s?.payment??"Unpaid")}>{s?.payment??"Unpaid"}</span>
+            <span style={{fontFamily:"var(--display)",fontWeight:700,fontSize:14}}>{fmtIDR(Number(o.sell_idr||0))}</span>
+          </div>
+        </button>
+      );})}
+    </div>
+    {openId && <InvoiceDoc ctx={ctx} order={filtered.find(o=>o.id===openId)} onComplete={handleComplete}/>}
   </>);
 }
 
-function InvoiceDoc({ctx,order}){
+function InvoiceDoc({ctx,order,onComplete}){
   const {D,custName,courierOf,shipmentOf,quote}=ctx;
   const q=quote(order);const s=shipmentOf(order.shipment_id);const c=courierOf(s?.courier_id);
   const invNo="INV-"+order.id.replace("ORD-","");
@@ -509,6 +542,7 @@ function InvoiceDoc({ctx,order}){
       <div style={S.invFoot}><span>Payment in IDR within 14 days · Bank transfer to JEI account</span>
         <div style={{display:"flex",gap:8}}>
           <button style={S.printBtn} onClick={downloadPDF}><Download size={13}/> Download PDF</button>
+          {!order.completed && onComplete && <button style={{...S.printBtn,background:"var(--good)",color:"#fff"}} onClick={()=>onComplete(order.id)}><Check size={13}/> Complete</button>}
         </div></div>
     </div>);
 }

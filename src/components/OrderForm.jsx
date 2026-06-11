@@ -26,7 +26,7 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
     // step 2: goods
     product: order?.product ?? "",
     qty: order?.qty ?? 1,
-    packages: (order?.packages && order.packages.length > 0) ? order.packages : [{ weight: order?.weight_kg ?? 0, l: order?.dim_l_cm ?? 0, w: order?.dim_w_cm ?? 0, h: order?.dim_h_cm ?? 0 }],
+    packages: (order?.packages && order.packages.length > 0) ? order.packages.map(p => ({ ...p, unit: p.unit || "metric" })) : [{ weight: order?.weight_kg ?? 0, l: order?.dim_l_cm ?? 0, w: order?.dim_w_cm ?? 0, h: order?.dim_h_cm ?? 0, unit: "metric" }],
     sell_idr: order?.sell_idr ?? 0,
     sell_currency: order?.sell_currency ?? "IDR",
     sell_input: order?.sell_currency === "USD" ? (order?.sell_idr / (ctx.liveFx?.usd_idr || 15850)).toFixed(2) : (order?.sell_idr ?? 0),
@@ -68,16 +68,19 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
     pkgs[idx] = { ...pkgs[idx], [key]: val };
     setF({ ...f, packages: pkgs });
   }
-  function addPkg() { setF({ ...f, packages: [...f.packages, { weight: 0, l: 0, w: 0, h: 0 }] }); }
+  function addPkg() { setF({ ...f, packages: [...f.packages, { weight: 0, l: 0, w: 0, h: 0, unit: "metric" }] }); }
   function removePkg(idx) { if (f.packages.length <= 1) return; setF({ ...f, packages: f.packages.filter((_, i) => i !== idx) }); }
 
-  // Convert packages to metric
-  const metricPkgs = f.packages.map(p => ({
-    weight: f.unit === "metric" ? +p.weight : +p.weight * LB_TO_KG,
-    l: f.unit === "metric" ? +p.l : +p.l * IN_TO_CM,
-    w: f.unit === "metric" ? +p.w : +p.w * IN_TO_CM,
-    h: f.unit === "metric" ? +p.h : +p.h * IN_TO_CM,
-  }));
+  // Convert each package to metric using its own unit
+  const metricPkgs = f.packages.map(p => {
+    const u = p.unit || "metric";
+    return {
+      weight: u === "metric" ? +p.weight : +p.weight * LB_TO_KG,
+      l: u === "metric" ? +p.l : +p.l * IN_TO_CM,
+      w: u === "metric" ? +p.w : +p.w * IN_TO_CM,
+      h: u === "metric" ? +p.h : +p.h * IN_TO_CM,
+    };
+  });
 
   const courier = D.couriers.find(c => c.id === (f.shipment_mode === "new" ? f.new_courier : D.shipments.find(s => s.id === f.shipment_id)?.courier_id));
   const div = courier?.divisor ?? 5000;
@@ -181,17 +184,7 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
           {step === 2 && (<>
             <Field label="Product"><input style={S.input} value={f.product} onChange={set("product")} placeholder="e.g. Hydraulic pump" /></Field>
 
-            {/* unit toggle */}
-            <div style={S.toggleRow}>
-              <span style={S.toggleLabel}>Units:</span>
-              {["metric", "imperial"].map(u => (
-                <button key={u} style={f.unit === u ? S.togOn : S.togOff} onClick={() => setF({ ...f, unit: u })}>
-                  {u === "metric" ? "kg / cm" : "lbs / in"}
-                </button>
-              ))}
-            </div>
-
-            {/* packages */}
+            {/* packages with per-package units */}
             <div style={{ fontSize: 12, fontWeight: 700, color: "var(--ink-3)", marginBottom: 6, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <span>PACKAGES ({f.packages.length})</span>
               <button style={S.togOff} onClick={addPkg}><Plus size={12} /> Add package</button>
@@ -199,13 +192,17 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
             {f.packages.map((p, i) => (
               <div key={i} style={S.pkgRow}>
                 <span style={{ fontSize: 11, color: "var(--ink-3)", fontWeight: 700, minWidth: 20 }}>#{i + 1}</span>
-                <input style={S.pkgInput} type="number" placeholder={f.unit === "metric" ? "kg" : "lbs"} value={p.weight} onChange={e => setPkg(i, "weight", e.target.value)} title="Weight" />
+                <select style={{ ...S.pkgInput, width: 52 }} value={p.unit || "metric"} onChange={e => setPkg(i, "unit", e.target.value)}>
+                  <option value="metric">kg</option>
+                  <option value="imperial">lb</option>
+                </select>
+                <input style={S.pkgInput} type="number" placeholder={p.unit === "imperial" ? "lbs" : "kg"} value={p.weight} onChange={e => setPkg(i, "weight", e.target.value)} title="Weight" />
                 <input style={S.pkgInput} type="number" placeholder="L" value={p.l} onChange={e => setPkg(i, "l", e.target.value)} />
                 <span style={{ color: "var(--ink-3)", fontSize: 12 }}>×</span>
                 <input style={S.pkgInput} type="number" placeholder="W" value={p.w} onChange={e => setPkg(i, "w", e.target.value)} />
                 <span style={{ color: "var(--ink-3)", fontSize: 12 }}>×</span>
                 <input style={S.pkgInput} type="number" placeholder="H" value={p.h} onChange={e => setPkg(i, "h", e.target.value)} />
-                <span style={{ fontSize: 11, color: "var(--ink-3)" }}>{f.unit === "metric" ? "cm" : "in"}</span>
+                <span style={{ fontSize: 11, color: "var(--ink-3)" }}>{p.unit === "imperial" ? "in" : "cm"}</span>
                 {f.packages.length > 1 && <button style={S.pkgDel} onClick={() => removePkg(i)}><Trash2 size={12} /></button>}
               </div>
             ))}
