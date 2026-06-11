@@ -8,7 +8,9 @@ export function chargeable(dims, wtKg, divisor) {
   const vol = (dims.l * dims.w * dims.h) / divisor;
   const greater = Math.max(wtKg, vol);
   const basis = vol > wtKg ? "volumetric" : "actual";
-  const charged = Math.max(greater, MIN_KG);
+  const raw = Math.max(greater, MIN_KG);
+  // Round UP to nearest 0.5 kg (e.g. 3.2 → 3.5, 3.7 → 4.0)
+  const charged = Math.ceil(raw * 2) / 2;
   return { vol, greater, charged, basis, minApplied: greater < MIN_KG };
 }
 

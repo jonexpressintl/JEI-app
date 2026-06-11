@@ -142,36 +142,51 @@ export function generateQuotationPDF({ customerName, packages, divisor, courierN
   const doc = new jsPDF();
   const cur = priceCurrency || "IDR";
 
-  // Title
-  doc.setFontSize(24); doc.setFont("helvetica", "bold"); doc.setTextColor(...ACCENT);
-  doc.text("Quotation", 195, 20, { align: "right" });
+  // Title bar
+  doc.setFillColor(...ACCENT);
+  doc.rect(0, 0, 210, 12, "F");
+  doc.setFontSize(16); doc.setFont("helvetica", "bold"); doc.setTextColor(255, 255, 255);
+  doc.text("Quotation", 105, 9, { align: "center" });
 
   // Company info (left)
+  let y = 22;
   doc.setFontSize(10); doc.setFont("helvetica", "bold"); doc.setTextColor(...INK);
-  doc.text(COMPANY.name, M.left, 18);
+  doc.text(COMPANY.name, M.left, y); y += 5;
   doc.setFontSize(8); doc.setFont("helvetica", "normal");
-  doc.text(COMPANY.pic, M.left, 24);
-  COMPANY.addr.forEach((l, i) => doc.text(l, M.left, 28 + i * 4));
+  doc.text(COMPANY.pic, M.left, y); y += 4;
+  COMPANY.addr.forEach(l => { doc.text(l, M.left, y); y += 4; });
+  doc.text(COMPANY.phone, M.left, y); y += 4;
+  doc.setTextColor(0, 0, 180); doc.text(COMPANY.email, M.left, y);
+  doc.setTextColor(...INK);
 
-  // Quote info (right)
-  doc.setFontSize(8); doc.setFont("helvetica", "normal"); doc.setTextColor(...GRAY);
+  // Quote info box (right)
+  const bx = 120, by = 20, bw = 75, bh = 24;
+  doc.setDrawColor(...LN); doc.setLineWidth(0.3);
+  doc.rect(bx, by, bw, bh);
+  doc.line(bx, by + 6, bx + bw, by + 6);
+  doc.line(bx, by + 12, bx + bw, by + 12);
+  doc.line(bx, by + 18, bx + bw, by + 18);
+  doc.line(bx + 28, by, bx + 28, by + bh);
+
   const qno = "QT-" + Date.now().toString(36).toUpperCase().slice(-6);
-  const items = [
-    ["Quote No:", qno],
-    ["Date:", new Date().toLocaleDateString("en-US")],
-    ["Customer:", customerName || "—"],
-    ["Courier:", `${courierName} (÷${divisor})`],
-  ];
-  items.forEach(([label, val], i) => {
-    doc.setTextColor(...GRAY); doc.text(label, 130, 18 + i * 5);
-    doc.setTextColor(...INK); doc.setFont("helvetica", "bold");
-    doc.text(val, 160, 18 + i * 5);
-    doc.setFont("helvetica", "normal");
-  });
+  doc.setFontSize(7.5); doc.setFont("helvetica", "normal"); doc.setTextColor(...GRAY);
+  doc.text("Quote No:", bx + 2, by + 4.5);
+  doc.text("Date:", bx + 2, by + 10.5);
+  doc.text("Customer:", bx + 2, by + 16.5);
+  doc.text("Courier:", bx + 2, by + 22.5);
+  doc.setFont("helvetica", "bold"); doc.setTextColor(...INK); doc.setFontSize(8);
+  doc.text(qno, bx + 30, by + 4.5);
+  doc.setFont("helvetica", "normal");
+  doc.text(new Date().toLocaleDateString("en-US"), bx + 30, by + 10.5);
+  doc.setFont("helvetica", "bold");
+  doc.text(customerName || "—", bx + 30, by + 16.5);
+  doc.setFont("helvetica", "normal");
+  doc.text(`${courierName} (÷${divisor})`, bx + 30, by + 22.5);
 
   // Separator
+  const sepY = 50;
   doc.setDrawColor(...ACCENT); doc.setLineWidth(0.5);
-  doc.line(M.left, 44, 195, 44);
+  doc.line(M.left, sepY, 195, sepY);
 
   // Package breakdown table
   const pkgs = packages || [];
@@ -191,7 +206,7 @@ export function generateQuotationPDF({ customerName, packages, divisor, courierN
   });
 
   const t1 = autoTable(doc, {
-    startY: 50,
+    startY: sepY + 6,
     head: [["Package", "Actual Weight", "Dimensions (L×W×H)", "Volumetric", "Charged", "Basis"]],
     body: body,
     styles: { fontSize: 8.5, cellPadding: 5, textColor: INK, lineColor: LN, lineWidth: 0.3 },
