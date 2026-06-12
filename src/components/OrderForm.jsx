@@ -257,32 +257,64 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
             </div>
             {f.packages.map((p, i) => {
               const u = p.unit || "metric";
+              const mp = metricPkgs[i];
+              const ch = chargeable({ l: mp.l, w: mp.w, h: mp.h }, mp.weight, div);
+              const isImperial = u === "imperial";
+              const actualKg = mp.weight;
+              const volKg = ch.vol;
+              const winner = ch.basis;
               return (
-                <div key={i} style={S.pkgRow}>
-                  <span style={{ flex: "0 0 28px", fontSize: 12, color: "var(--ink-3)", fontWeight: 700 }}>{i + 1}</span>
-                  <div style={S.pkgCell}>
-                    <input style={S.pkgInput} type="number" value={p.weight} onChange={e => setPkg(i, "weight", e.target.value)} placeholder="0" />
-                    <select style={S.pkgUnit} value={u} onChange={e => setPkg(i, "unit", e.target.value)}>
-                      <option value="metric">kg</option><option value="imperial">lb</option>
-                    </select>
+                <div key={i}>
+                  <div style={S.pkgRow}>
+                    <span style={{ flex: "0 0 28px", fontSize: 12, color: "var(--ink-3)", fontWeight: 700 }}>{i + 1}</span>
+                    <div style={S.pkgCell}>
+                      <input style={S.pkgInput} type="number" value={p.weight} onChange={e => setPkg(i, "weight", e.target.value)} placeholder="0" />
+                      <select style={S.pkgUnit} value={u} onChange={e => setPkg(i, "unit", e.target.value)}>
+                        <option value="metric">kg</option><option value="imperial">lb</option>
+                      </select>
+                    </div>
+                    <div style={{ ...S.pkgCell, flex: 3, gap: 4 }}>
+                      <input style={S.pkgDimInput} type="number" value={p.l} onChange={e => setPkg(i, "l", e.target.value)} placeholder="L" />
+                      <span style={S.pkgX}>×</span>
+                      <input style={S.pkgDimInput} type="number" value={p.w} onChange={e => setPkg(i, "w", e.target.value)} placeholder="W" />
+                      <span style={S.pkgX}>×</span>
+                      <input style={S.pkgDimInput} type="number" value={p.h} onChange={e => setPkg(i, "h", e.target.value)} placeholder="H" />
+                      <select style={S.pkgUnit} value={u} onChange={e => setPkg(i, "unit", e.target.value)}>
+                        <option value="metric">cm</option><option value="imperial">in</option>
+                      </select>
+                    </div>
+                    {f.packages.length > 1 ? <button style={S.pkgDel} onClick={() => removePkg(i)}><Trash2 size={14} /></button> : <span style={{ width: 28 }} />}
                   </div>
-                  <div style={{ ...S.pkgCell, flex: 3, gap: 4 }}>
-                    <input style={S.pkgDimInput} type="number" value={p.l} onChange={e => setPkg(i, "l", e.target.value)} placeholder="L" />
-                    <span style={S.pkgX}>×</span>
-                    <input style={S.pkgDimInput} type="number" value={p.w} onChange={e => setPkg(i, "w", e.target.value)} placeholder="W" />
-                    <span style={S.pkgX}>×</span>
-                    <input style={S.pkgDimInput} type="number" value={p.h} onChange={e => setPkg(i, "h", e.target.value)} placeholder="H" />
-                    <select style={S.pkgUnit} value={u} onChange={e => setPkg(i, "unit", e.target.value)}>
-                      <option value="metric">cm</option><option value="imperial">in</option>
-                    </select>
+                  {/* Per-package weight comparison */}
+                  <div style={S.pkgBreakdown}>
+                    <span style={winner === "actual" ? S.pkgWinner : S.pkgDim}>
+                      Actual: {isImperial ? `${(+p.weight).toFixed(2)} lb → ` : ""}{actualKg.toFixed(2)} kg
+                    </span>
+                    <span style={S.pkgVs}>vs</span>
+                    <span style={winner === "volumetric" ? S.pkgWinner : S.pkgDim}>
+                      Vol: {volKg.toFixed(2)} kg
+                    </span>
+                    <span style={S.pkgArrow}>→</span>
+                    <span style={S.pkgCharged}>
+                      Charged: {ch.charged.toFixed(1)} kg
+                      {ch.minApplied ? " (min 3kg)" : ` (${winner})`}
+                    </span>
                   </div>
-                  {f.packages.length > 1 ? <button style={S.pkgDel} onClick={() => removePkg(i)}><Trash2 size={14} /></button> : <span style={{ width: 28 }} />}
                 </div>
               );
             })}
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-              <span style={{ fontSize: 12.5, color: "var(--ink-2)", fontWeight: 600 }}>Total packages: {f.packages.length} · Charged: {totalCharged.toFixed(1)} kg (÷{div})</span>
-              <button style={S.addPkgBtn} onClick={addPkg}><Plus size={13} /> ADD PACKAGE</button>
+
+            {/* Totals summary */}
+            <div style={S.pkgTotals}>
+              <div style={S.pkgTotalRow}>
+                <span>Total actual: <b>{metricPkgs.reduce((a, p) => a + p.weight, 0).toFixed(2)} kg</b></span>
+                <span>Total volumetric: <b>{metricPkgs.reduce((a, p, i) => { const ch = chargeable({ l: p.l, w: p.w, h: p.h }, p.weight, div); return a + ch.vol; }, 0).toFixed(2)} kg</b></span>
+                <span style={{ fontWeight: 700, color: "var(--accent)" }}>Total charged: {totalCharged.toFixed(1)} kg</span>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ fontSize: 12, color: "var(--ink-3)" }}>{f.packages.length} package{f.packages.length > 1 ? "s" : ""} · ÷{div} · rounded up to nearest 0.5 kg</span>
+                <button style={S.addPkgBtn} onClick={addPkg}><Plus size={13} /> ADD PACKAGE</button>
+              </div>
             </div>
 
             <Field label="Qty (items)"><input style={S.input} type="number" value={f.qty} onChange={set("qty")} /></Field>
@@ -477,6 +509,14 @@ const S = {
   pkgX: { color: "var(--ink-3)", fontSize: 13, fontWeight: 600, flexShrink: 0 },
   pkgDel: { display: "grid", placeItems: "center", background: "transparent", border: "none", color: "var(--bad)", cursor: "pointer", padding: 4, width: 28, flexShrink: 0 },
   addPkgBtn: { display: "flex", alignItems: "center", gap: 5, background: "transparent", border: "none", color: "var(--accent)", fontSize: 12, fontWeight: 700, letterSpacing: ".04em", cursor: "pointer", fontFamily: "var(--body)" },
+  pkgBreakdown: { display: "flex", alignItems: "center", gap: 8, padding: "4px 12px 10px 40px", fontSize: 12, flexWrap: "wrap" },
+  pkgWinner: { fontWeight: 700, color: "var(--accent)", background: "var(--good-bg)", padding: "2px 8px", borderRadius: 6 },
+  pkgDim: { color: "var(--ink-3)" },
+  pkgVs: { color: "var(--ink-3)", fontSize: 11, fontStyle: "italic" },
+  pkgArrow: { color: "var(--ink-3)", fontSize: 13 },
+  pkgCharged: { fontWeight: 700, color: "var(--ink)", fontSize: 12.5 },
+  pkgTotals: { background: "var(--head)", border: "1px solid var(--line)", borderRadius: 10, padding: "12px 14px", marginBottom: 14 },
+  pkgTotalRow: { display: "flex", justifyContent: "space-between", gap: 12, fontSize: 13, marginBottom: 8, flexWrap: "wrap" },
   foot: { padding: "14px 20px", borderTop: "1px solid var(--line)", display: "flex", alignItems: "center", gap: 8 },
   delBtn: { display: "flex", alignItems: "center", gap: 5, background: "var(--bad-bg)", color: "var(--bad)", border: "none", borderRadius: 9, padding: "9px 13px", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "var(--body)" },
   backBtn: { display: "flex", alignItems: "center", gap: 5, background: "var(--card)", border: "1px solid var(--line)", color: "var(--ink-2)", borderRadius: 9, padding: "9px 14px", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "var(--body)" },
