@@ -91,8 +91,10 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
   };
 
   const div = getDivisor();
-  let totalCharged = 0;
-  metricPkgs.forEach(p => { totalCharged += chargeable({ l: p.l, w: p.w, h: p.h }, p.weight, div).charged; });
+  // Sum RAW chargeable (unrounded) across all packages, then round total once
+  let totalRaw = 0;
+  metricPkgs.forEach(p => { totalRaw += chargeable({ l: p.l, w: p.w, h: p.h }, p.weight, div).raw; });
+  const totalCharged = Math.ceil(totalRaw * 2) / 2; // round total to nearest 0.5
 
   const feeMode = getFeeMode(f.shipping_us_sg, f.shipping_sg_id);
   const feeFields = FEE_LABELS[feeMode];
@@ -215,7 +217,10 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
               <Field label="Contact person"><input style={S.input} value={f.contact_person} onChange={set("contact_person")} /></Field>
               <Field label="Contact number"><input style={S.input} value={f.contact_number} onChange={set("contact_number")} /></Field>
             </div>
-            <Field label="Order date"><input style={S.input} type="date" value={f.order_date} onChange={set("order_date")} /></Field>
+            <div style={S.row2}>
+              <Field label="Order date"><input style={S.input} type="date" value={f.order_date} onChange={set("order_date")} /></Field>
+              <Field label={`ETA ${f.destination}`}><input style={S.input} type="date" value={f.new_eta} onChange={set("new_eta")} /></Field>
+            </div>
           </>)}
 
           {/* ═══ STEP 2: Means of Shipping ═══ */}
@@ -285,7 +290,7 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
                     </div>
                     {f.packages.length > 1 ? <button style={S.pkgDel} onClick={() => removePkg(i)}><Trash2 size={14} /></button> : <span style={{ width: 28 }} />}
                   </div>
-                  {/* Per-package weight comparison */}
+                  {/* Per-package weight comparison (unrounded) */}
                   <div style={S.pkgBreakdown}>
                     <span style={winner === "actual" ? S.pkgWinner : S.pkgDim}>
                       Actual: {isImperial ? `${(+p.weight).toFixed(2)} lb → ` : ""}{actualKg.toFixed(2)} kg
@@ -296,7 +301,7 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
                     </span>
                     <span style={S.pkgArrow}>→</span>
                     <span style={S.pkgCharged}>
-                      Charged: {ch.charged.toFixed(1)} kg
+                      {ch.raw.toFixed(2)} kg
                       {ch.minApplied ? " (min 3kg)" : ` (${winner})`}
                     </span>
                   </div>
@@ -304,12 +309,18 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
               );
             })}
 
-            {/* Totals summary */}
+            {/* Totals summary — raw sum then rounded */}
             <div style={S.pkgTotals}>
               <div style={S.pkgTotalRow}>
                 <span>Total actual: <b>{metricPkgs.reduce((a, p) => a + p.weight, 0).toFixed(2)} kg</b></span>
                 <span>Total volumetric: <b>{metricPkgs.reduce((a, p, i) => { const ch = chargeable({ l: p.l, w: p.w, h: p.h }, p.weight, div); return a + ch.vol; }, 0).toFixed(2)} kg</b></span>
-                <span style={{ fontWeight: 700, color: "var(--accent)" }}>Total charged: {totalCharged.toFixed(1)} kg</span>
+              </div>
+              <div style={S.pkgTotalRow}>
+                <span>Sum (unrounded): <b>{totalRaw.toFixed(2)} kg</b></span>
+                <span style={{ fontWeight: 700, color: "var(--accent)", fontSize: 14 }}>
+                  Charged total: {totalCharged.toFixed(1)} kg
+                  {totalCharged !== totalRaw ? ` (↑${(totalCharged - totalRaw).toFixed(2)} kg)` : ""}
+                </span>
               </div>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <span style={{ fontSize: 12, color: "var(--ink-3)" }}>{f.packages.length} package{f.packages.length > 1 ? "s" : ""} · ÷{div} · rounded up to nearest 0.5 kg</span>
@@ -374,7 +385,7 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
               {D.shipments.length > 0 && <button style={f.shipment_mode === "existing" ? S.togOn : S.togOff} onClick={() => setV("shipment_mode", "existing")}>Add to existing</button>}
             </div>
             {f.shipment_mode === "new" ? (
-              <Field label="ETA Indonesia"><input style={S.input} type="date" value={f.new_eta} onChange={set("new_eta")} /></Field>
+              <span style={{fontSize:12.5,color:"var(--ink-3)"}}>A new shipment will be created for this order.</span>
             ) : (
               <Field label="Shipment"><select style={S.input} value={f.shipment_id} onChange={set("shipment_id")}>
                 {D.shipments.map(s => <option key={s.id} value={s.id}>{s.id} · {s.stage}</option>)}
