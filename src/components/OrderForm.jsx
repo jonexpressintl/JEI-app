@@ -9,19 +9,6 @@ const SG_ID_OPTIONS = ["Airfreight", "Seafreight"];
 
 function isAir(method) { return method && method !== "Seafreight"; }
 
-// Determine fee structure based on shipping combo
-function getFeeMode(usSg, sgId) {
-  if (isAir(usSg) && isAir(sgId)) return "air_air";
-  if (isAir(usSg) && !isAir(sgId)) return "air_sea";
-  return "sea_sea";
-}
-
-const FEE_LABELS = {
-  air_air: [{ key: "fee_1", label: "Price per weight" }, { key: "fee_additional", label: "Additional cost" }],
-  air_sea: [{ key: "fee_1", label: "Airfreight fee" }, { key: "fee_clearance", label: "Clearance fee" }, { key: "fee_2", label: "Seafreight fee" }],
-  sea_sea: [{ key: "fee_1", label: "Seafreight 1 (USA→SIN)" }, { key: "fee_clearance", label: "Clearance fee" }, { key: "fee_2", label: "Seafreight 2 (SIN→JKT)" }],
-};
-
 export default function OrderForm({ ctx, order, onClose, onSaved }) {
   const { D } = ctx;
   const editing = !!order;
@@ -51,6 +38,8 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
     fee_clearance: order?.fee_clearance ?? 0,
     fee_2: order?.fee_2 ?? 0,
     fee_additional: order?.fee_additional ?? 0,
+    air_sea_option: order?.air_sea_option ?? "weight",  // "weight" or "breakdown"
+    cbm_override: order?.cbm_override ?? "",
     // Step 4: Additional notes
     aes_required: order?.aes_required ?? false,
     aes_details: order?.aes_details ?? "",
@@ -96,11 +85,25 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
   metricPkgs.forEach(p => { totalRaw += chargeable({ l: p.l, w: p.w, h: p.h }, p.weight, div).raw; });
   const totalCharged = Math.ceil(totalRaw * 2) / 2; // round total to nearest 0.5
 
-  const feeMode = getFeeMode(f.shipping_us_sg, f.shipping_sg_id);
-  const feeFields = FEE_LABELS[feeMode];
-  const feeTotal = feeFields.reduce((sum, ff) => sum + (+f[ff.key] || 0), 0);
+  // Fee mode based on shipping combo
+  const feeMode = isAir(f.shipping_us_sg) && isAir(f.shipping_sg_id) ? "air_air"
+    : isAir(f.shipping_us_sg) && !isAir(f.shipping_sg_id) ? "air_sea" : "sea_sea";
+
   const weightPrice = totalCharged * (+f.price_per_kg);
-  const grandTotal = feeMode === "air_air" ? weightPrice + (+f.fee_additional || 0) : feeTotal;
+
+  // Grand total depends on combo + sub-option
+  let grandTotal = 0;
+  if (feeMode === "air_air") {
+    grandTotal = weightPrice + (+f.fee_additional || 0);
+  } else if (feeMode === "air_sea") {
+    if (f.air_sea_option === "weight") {
+      grandTotal = weightPrice + (+f.fee_additional || 0);
+    } else {
+      grandTotal = (+f.fee_1 || 0) + (+f.fee_clearance || 0) + (+f.fee_2 || 0) + (+f.fee_additional || 0);
+    }
+  } else {
+    grandTotal = (+f.fee_1 || 0) + (+f.fee_clearance || 0) + (+f.fee_2 || 0) + (+f.fee_additional || 0);
+  }
 
   const fmtPrice = (n) => f.price_currency === "USD" ? `$${Number(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : fmtIDR(n);
 
@@ -253,7 +256,11 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
           {step === 3 && (<>
             <Field label="Product description"><input style={S.input} value={f.product} onChange={set("product")} placeholder="e.g. Hydraulic pump parts" /></Field>
 
-            {/* Packages */}
+            {/* Packages — ADD PACKAGE button prominent at top */}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+              <div style={S.pkgColLabel}>PACKAGES ({f.packages.length})</div>
+              <button style={S.addPkgBtnLg} onClick={addPkg}><Plus size={14} /> Add new package</button>
+            </div>
             <div style={S.pkgHeader}>
               <span style={{ flex: "0 0 28px" }}></span>
               <span style={S.pkgColLabel}>WEIGHT</span>
@@ -265,9 +272,6 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
               const mp = metricPkgs[i];
               const ch = chargeable({ l: mp.l, w: mp.w, h: mp.h }, mp.weight, div);
               const isImperial = u === "imperial";
-              const actualKg = mp.weight;
-              const volKg = ch.vol;
-              const winner = ch.basis;
               return (
                 <div key={i}>
                   <div style={S.pkgRow}>
@@ -290,52 +294,43 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
                     </div>
                     {f.packages.length > 1 ? <button style={S.pkgDel} onClick={() => removePkg(i)}><Trash2 size={14} /></button> : <span style={{ width: 28 }} />}
                   </div>
-                  {/* Per-package weight comparison (unrounded) */}
                   <div style={S.pkgBreakdown}>
-                    <span style={winner === "actual" ? S.pkgWinner : S.pkgDim}>
-                      Actual: {isImperial ? `${(+p.weight).toFixed(2)} lb → ` : ""}{actualKg.toFixed(2)} kg
+                    <span style={ch.basis === "actual" ? S.pkgWinner : S.pkgDim}>
+                      Actual: {isImperial ? `${(+p.weight).toFixed(2)} lb → ` : ""}{mp.weight.toFixed(2)} kg
                     </span>
                     <span style={S.pkgVs}>vs</span>
-                    <span style={winner === "volumetric" ? S.pkgWinner : S.pkgDim}>
-                      Vol: {volKg.toFixed(2)} kg
-                    </span>
+                    <span style={ch.basis === "volumetric" ? S.pkgWinner : S.pkgDim}>Vol: {ch.vol.toFixed(2)} kg</span>
                     <span style={S.pkgArrow}>→</span>
-                    <span style={S.pkgCharged}>
-                      {ch.raw.toFixed(2)} kg
-                      {ch.minApplied ? " (min 3kg)" : ` (${winner})`}
-                    </span>
+                    <span style={S.pkgCharged}>{ch.raw.toFixed(2)} kg {ch.minApplied ? "(min 3kg)" : `(${ch.basis})`}</span>
                   </div>
                 </div>
               );
             })}
 
-            {/* Totals summary — raw sum then rounded */}
             <div style={S.pkgTotals}>
               <div style={S.pkgTotalRow}>
                 <span>Total actual: <b>{metricPkgs.reduce((a, p) => a + p.weight, 0).toFixed(2)} kg</b></span>
-                <span>Total volumetric: <b>{metricPkgs.reduce((a, p, i) => { const ch = chargeable({ l: p.l, w: p.w, h: p.h }, p.weight, div); return a + ch.vol; }, 0).toFixed(2)} kg</b></span>
+                <span>Total vol: <b>{metricPkgs.reduce((a, p) => a + chargeable({ l: p.l, w: p.w, h: p.h }, p.weight, div).vol, 0).toFixed(2)} kg</b></span>
               </div>
               <div style={S.pkgTotalRow}>
-                <span>Sum (unrounded): <b>{totalRaw.toFixed(2)} kg</b></span>
+                <span>Sum: <b>{totalRaw.toFixed(2)} kg</b></span>
                 <span style={{ fontWeight: 700, color: "var(--accent)", fontSize: 14 }}>
-                  Charged total: {totalCharged.toFixed(1)} kg
-                  {totalCharged !== totalRaw ? ` (↑${(totalCharged - totalRaw).toFixed(2)} kg)` : ""}
+                  Charged: {totalCharged.toFixed(1)} kg
+                  {totalCharged > totalRaw ? ` (↑${(totalCharged - totalRaw).toFixed(2)})` : ""}
                 </span>
               </div>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <span style={{ fontSize: 12, color: "var(--ink-3)" }}>{f.packages.length} package{f.packages.length > 1 ? "s" : ""} · ÷{div} · rounded up to nearest 0.5 kg</span>
-                <button style={S.addPkgBtn} onClick={addPkg}><Plus size={13} /> ADD PACKAGE</button>
-              </div>
+              <span style={{ fontSize: 11.5, color: "var(--ink-3)" }}>{f.packages.length} pkg · ÷{div} · rounded ↑ 0.5 kg</span>
             </div>
 
             <Field label="Qty (items)"><input style={S.input} type="number" value={f.qty} onChange={set("qty")} /></Field>
 
-            {/* Pricing based on fee mode */}
+            {/* ── PRICING SECTION ── */}
             <div style={S.feeSection}>
               <div style={S.feeSectionTitle}>
                 Pricing — {feeMode === "air_air" ? "Air + Air" : feeMode === "air_sea" ? "Air + Sea" : "Sea + Sea"}
               </div>
 
+              {/* ── AIR + AIR: rate per kg + additional ── */}
               {feeMode === "air_air" && (<>
                 <div style={S.row2}>
                   <Field label="Rate per kg">
@@ -351,30 +346,92 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
                   </Field>
                 </div>
                 <div style={S.totalBar}>
-                  <span>Weight price: {fmtPrice(weightPrice)}</span>
+                  <span>Weight: {fmtPrice(weightPrice)}</span>
                   <span>+ Additional: {fmtPrice(+f.fee_additional || 0)}</span>
                   <span style={{ fontWeight: 700 }}>Total: {fmtPrice(grandTotal)}</span>
                 </div>
               </>)}
 
-              {feeMode !== "air_air" && (<>
-                <div style={S.row3}>
-                  {feeFields.map(ff => (
-                    <Field key={ff.key} label={ff.label}>
+              {/* ── AIR + SEA: dropdown for 2 options ── */}
+              {feeMode === "air_sea" && (<>
+                <Field label="Pricing method">
+                  <select style={S.input} value={f.air_sea_option} onChange={set("air_sea_option")}>
+                    <option value="weight">Price per weight + Additional cost</option>
+                    <option value="breakdown">Airfreight + Clearance + Seafreight + Additional</option>
+                  </select>
+                </Field>
+
+                {f.air_sea_option === "weight" ? (<>
+                  <div style={S.row2}>
+                    <Field label="Rate per kg">
                       <div style={{ display: "flex", gap: 6 }}>
-                        <input style={{ ...S.input, flex: 1 }} type="number" value={f[ff.key]} onChange={set(ff.key)} placeholder="0" />
+                        <input style={{ ...S.input, flex: 1 }} type="number" value={f.price_per_kg} onChange={set("price_per_kg")} />
                         <select style={{ ...S.input, width: 70 }} value={f.price_currency} onChange={set("price_currency")}>
                           <option value="USD">USD</option><option value="IDR">IDR</option>
                         </select>
                       </div>
                     </Field>
-                  ))}
+                    <Field label="Additional cost">
+                      <input style={S.input} type="number" value={f.fee_additional} onChange={set("fee_additional")} placeholder="0" />
+                    </Field>
+                  </div>
+                  <div style={S.totalBar}>
+                    <span>Weight: {fmtPrice(weightPrice)}</span>
+                    <span>+ Additional: {fmtPrice(+f.fee_additional || 0)}</span>
+                    <span style={{ fontWeight: 700 }}>Total: {fmtPrice(grandTotal)}</span>
+                  </div>
+                </>) : (<>
+                  <div style={S.row2}>
+                    <Field label="Airfreight fee"><input style={S.input} type="number" value={f.fee_1} onChange={set("fee_1")} placeholder="0" /></Field>
+                    <Field label="Clearance fee"><input style={S.input} type="number" value={f.fee_clearance} onChange={set("fee_clearance")} placeholder="0" /></Field>
+                  </div>
+                  <div style={S.row2}>
+                    <Field label="Seafreight fee"><input style={S.input} type="number" value={f.fee_2} onChange={set("fee_2")} placeholder="0" /></Field>
+                    <Field label="Additional cost"><input style={S.input} type="number" value={f.fee_additional} onChange={set("fee_additional")} placeholder="0" /></Field>
+                  </div>
+                  <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
+                    <select style={{ ...S.input, width: 70 }} value={f.price_currency} onChange={set("price_currency")}>
+                      <option value="USD">USD</option><option value="IDR">IDR</option>
+                    </select>
+                    <span style={{ fontSize: 12, color: "var(--ink-3)", alignSelf: "center" }}>Currency for all fees</span>
+                  </div>
+                  <div style={S.totalBar}>
+                    <span>Airfreight: {fmtPrice(+f.fee_1||0)}</span>
+                    <span>+ Clearance: {fmtPrice(+f.fee_clearance||0)}</span>
+                    <span>+ Seafreight: {fmtPrice(+f.fee_2||0)}</span>
+                    <span>+ Additional: {fmtPrice(+f.fee_additional||0)}</span>
+                    <span style={{ fontWeight: 700 }}>Total: {fmtPrice(grandTotal)}</span>
+                  </div>
+                </>)}
+              </>)}
+
+              {/* ── SEA + SEA: seafreight 1 + clearance + seafreight 2 + additional + CBM override ── */}
+              {feeMode === "sea_sea" && (<>
+                <div style={S.row2}>
+                  <Field label="Seafreight 1 (USA→SIN)"><input style={S.input} type="number" value={f.fee_1} onChange={set("fee_1")} placeholder="0" /></Field>
+                  <Field label="Clearance fee"><input style={S.input} type="number" value={f.fee_clearance} onChange={set("fee_clearance")} placeholder="0" /></Field>
+                </div>
+                <div style={S.row2}>
+                  <Field label="Seafreight 2 (SIN→JKT)"><input style={S.input} type="number" value={f.fee_2} onChange={set("fee_2")} placeholder="0" /></Field>
+                  <Field label="Additional cost"><input style={S.input} type="number" value={f.fee_additional} onChange={set("fee_additional")} placeholder="0" /></Field>
+                </div>
+                <div style={S.row2}>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    <select style={{ ...S.input, width: 70 }} value={f.price_currency} onChange={set("price_currency")}>
+                      <option value="USD">USD</option><option value="IDR">IDR</option>
+                    </select>
+                    <span style={{ fontSize: 12, color: "var(--ink-3)", alignSelf: "center" }}>Currency</span>
+                  </div>
+                  <Field label="CBM override (optional)">
+                    <input style={S.input} type="number" value={f.cbm_override} onChange={set("cbm_override")} placeholder="Leave blank to auto-calculate" />
+                  </Field>
                 </div>
                 <div style={S.totalBar}>
-                  {feeFields.map((ff, i) => (
-                    <span key={ff.key}>{i > 0 ? "+ " : ""}{ff.label}: {fmtPrice(+f[ff.key] || 0)}</span>
-                  ))}
-                  <span style={{ fontWeight: 700, marginLeft: "auto" }}>Total: {fmtPrice(feeTotal)}</span>
+                  <span>SF1: {fmtPrice(+f.fee_1||0)}</span>
+                  <span>+ Clear: {fmtPrice(+f.fee_clearance||0)}</span>
+                  <span>+ SF2: {fmtPrice(+f.fee_2||0)}</span>
+                  <span>+ Add: {fmtPrice(+f.fee_additional||0)}</span>
+                  <span style={{ fontWeight: 700 }}>Total: {fmtPrice(grandTotal)}</span>
                 </div>
               </>)}
             </div>
@@ -384,9 +441,7 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
               <button style={f.shipment_mode === "new" ? S.togOn : S.togOff} onClick={() => setV("shipment_mode", "new")}>Create new shipment</button>
               {D.shipments.length > 0 && <button style={f.shipment_mode === "existing" ? S.togOn : S.togOff} onClick={() => setV("shipment_mode", "existing")}>Add to existing</button>}
             </div>
-            {f.shipment_mode === "new" ? (
-              <span style={{fontSize:12.5,color:"var(--ink-3)"}}>A new shipment will be created for this order.</span>
-            ) : (
+            {f.shipment_mode === "existing" && (
               <Field label="Shipment"><select style={S.input} value={f.shipment_id} onChange={set("shipment_id")}>
                 {D.shipments.map(s => <option key={s.id} value={s.id}>{s.id} · {s.stage}</option>)}
               </select></Field>
@@ -520,6 +575,7 @@ const S = {
   pkgX: { color: "var(--ink-3)", fontSize: 13, fontWeight: 600, flexShrink: 0 },
   pkgDel: { display: "grid", placeItems: "center", background: "transparent", border: "none", color: "var(--bad)", cursor: "pointer", padding: 4, width: 28, flexShrink: 0 },
   addPkgBtn: { display: "flex", alignItems: "center", gap: 5, background: "transparent", border: "none", color: "var(--accent)", fontSize: 12, fontWeight: 700, letterSpacing: ".04em", cursor: "pointer", fontFamily: "var(--body)" },
+  addPkgBtnLg: { display: "flex", alignItems: "center", gap: 6, background: "var(--accent)", color: "#fff", border: "none", borderRadius: 9, padding: "8px 14px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "var(--body)" },
   pkgBreakdown: { display: "flex", alignItems: "center", gap: 8, padding: "4px 12px 10px 40px", fontSize: 12, flexWrap: "wrap" },
   pkgWinner: { fontWeight: 700, color: "var(--accent)", background: "var(--good-bg)", padding: "2px 8px", borderRadius: 6 },
   pkgDim: { color: "var(--ink-3)" },
