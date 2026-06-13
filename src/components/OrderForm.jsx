@@ -38,8 +38,14 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
     fee_clearance: order?.fee_clearance ?? 0,
     fee_2: order?.fee_2 ?? 0,
     fee_additional: order?.fee_additional ?? 0,
-    air_sea_option: order?.air_sea_option ?? "weight",  // "weight" or "breakdown"
-    cbm_override: order?.cbm_override ?? "",
+    fee_1_cur: "USD",
+    fee_clearance_cur: "USD",
+    fee_2_cur: "IDR",
+    fee_additional_cur: "USD",
+    manual_fx_rate: "",
+    air_sea_option: "weight",
+    cbm_us_sg: "",
+    cbm_sg_id: "",
     // Step 4: Additional notes
     aes_required: order?.aes_required ?? false,
     aes_details: order?.aes_details ?? "",
@@ -106,6 +112,22 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
   }
 
   const fmtPrice = (n) => f.price_currency === "USD" ? `$${Number(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : fmtIDR(n);
+  const fmtFee = (n, cur) => cur === "USD" ? `$${Number(n||0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : fmtIDR(n||0);
+
+  // Convert a fee to IDR using manual rate
+  const fxRate = +f.manual_fx_rate || ctx.liveFx?.usd_idr || 15850;
+  const toIDRFee = (amt, cur) => cur === "USD" ? (+amt || 0) * fxRate : (+amt || 0);
+
+  // Grand total in IDR (all fees converted)
+  const grandTotalIDR = (() => {
+    if (feeMode === "air_air") {
+      return (weightPrice * (f.price_currency === "USD" ? fxRate : 1)) + toIDRFee(+f.fee_additional, f.fee_additional_cur);
+    } else if (feeMode === "air_sea" && f.air_sea_option === "weight") {
+      return (weightPrice * (f.price_currency === "USD" ? fxRate : 1)) + toIDRFee(+f.fee_additional, f.fee_additional_cur);
+    } else {
+      return toIDRFee(+f.fee_1, f.fee_1_cur) + toIDRFee(+f.fee_clearance, f.fee_clearance_cur) + toIDRFee(+f.fee_2, f.fee_2_cur) + toIDRFee(+f.fee_additional, f.fee_additional_cur);
+    }
+  })();
 
   async function save() {
     setErr(""); setBusy(true);
@@ -130,8 +152,7 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
         if (error) throw error;
       }
 
-      const fx = ctx.liveFx ?? { usd_idr: 15850 };
-      const sellIdr = f.price_currency === "USD" ? Math.round(grandTotal * fx.usd_idr) : Math.round(grandTotal);
+      const sellIdr = Math.round(grandTotalIDR);
 
       const payload = {
         customer_id: customerId, shipment_id: shipmentId,
@@ -382,56 +403,96 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
                   </div>
                 </>) : (<>
                   <div style={S.row2}>
-                    <Field label="Airfreight fee"><input style={S.input} type="number" value={f.fee_1} onChange={set("fee_1")} placeholder="0" /></Field>
-                    <Field label="Clearance fee"><input style={S.input} type="number" value={f.fee_clearance} onChange={set("fee_clearance")} placeholder="0" /></Field>
+                    <Field label="Airfreight fee">
+                      <div style={{display:"flex",gap:4}}>
+                        <input style={{...S.input,flex:1}} type="number" value={f.fee_1} onChange={set("fee_1")} placeholder="0"/>
+                        <select style={{...S.input,width:65}} value={f.fee_1_cur} onChange={set("fee_1_cur")}><option value="USD">USD</option><option value="IDR">IDR</option></select>
+                      </div>
+                    </Field>
+                    <Field label="Clearance fee">
+                      <div style={{display:"flex",gap:4}}>
+                        <input style={{...S.input,flex:1}} type="number" value={f.fee_clearance} onChange={set("fee_clearance")} placeholder="0"/>
+                        <select style={{...S.input,width:65}} value={f.fee_clearance_cur} onChange={set("fee_clearance_cur")}><option value="USD">USD</option><option value="IDR">IDR</option></select>
+                      </div>
+                    </Field>
                   </div>
                   <div style={S.row2}>
-                    <Field label="Seafreight fee"><input style={S.input} type="number" value={f.fee_2} onChange={set("fee_2")} placeholder="0" /></Field>
-                    <Field label="Additional cost"><input style={S.input} type="number" value={f.fee_additional} onChange={set("fee_additional")} placeholder="0" /></Field>
+                    <Field label="Seafreight fee">
+                      <div style={{display:"flex",gap:4}}>
+                        <input style={{...S.input,flex:1}} type="number" value={f.fee_2} onChange={set("fee_2")} placeholder="0"/>
+                        <select style={{...S.input,width:65}} value={f.fee_2_cur} onChange={set("fee_2_cur")}><option value="USD">USD</option><option value="IDR">IDR</option></select>
+                      </div>
+                    </Field>
+                    <Field label="Additional cost">
+                      <div style={{display:"flex",gap:4}}>
+                        <input style={{...S.input,flex:1}} type="number" value={f.fee_additional} onChange={set("fee_additional")} placeholder="0"/>
+                        <select style={{...S.input,width:65}} value={f.fee_additional_cur} onChange={set("fee_additional_cur")}><option value="USD">USD</option><option value="IDR">IDR</option></select>
+                      </div>
+                    </Field>
                   </div>
-                  <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
-                    <select style={{ ...S.input, width: 70 }} value={f.price_currency} onChange={set("price_currency")}>
-                      <option value="USD">USD</option><option value="IDR">IDR</option>
-                    </select>
-                    <span style={{ fontSize: 12, color: "var(--ink-3)", alignSelf: "center" }}>Currency for all fees</span>
-                  </div>
+                  <Field label="USD → IDR rate (manual)">
+                    <input style={{...S.input,maxWidth:200}} type="number" value={f.manual_fx_rate} onChange={set("manual_fx_rate")} placeholder={`e.g. ${ctx.liveFx?.usd_idr || 15850}`}/>
+                  </Field>
                   <div style={S.totalBar}>
-                    <span>Airfreight: {fmtPrice(+f.fee_1||0)}</span>
-                    <span>+ Clearance: {fmtPrice(+f.fee_clearance||0)}</span>
-                    <span>+ Seafreight: {fmtPrice(+f.fee_2||0)}</span>
-                    <span>+ Additional: {fmtPrice(+f.fee_additional||0)}</span>
-                    <span style={{ fontWeight: 700 }}>Total: {fmtPrice(grandTotal)}</span>
+                    <span>Air: {fmtFee(+f.fee_1,f.fee_1_cur)}</span>
+                    <span>+ Clear: {fmtFee(+f.fee_clearance,f.fee_clearance_cur)}</span>
+                    <span>+ Sea: {fmtFee(+f.fee_2,f.fee_2_cur)}</span>
+                    <span>+ Add: {fmtFee(+f.fee_additional,f.fee_additional_cur)}</span>
+                    <span style={{fontWeight:700}}>Total (IDR): {fmtIDR(grandTotalIDR)}</span>
                   </div>
                 </>)}
               </>)}
 
-              {/* ── SEA + SEA: seafreight 1 + clearance + seafreight 2 + additional + CBM override ── */}
+              {/* ── SEA + SEA: per-fee currency + dual CBM + manual FX ── */}
               {feeMode === "sea_sea" && (<>
                 <div style={S.row2}>
-                  <Field label="Seafreight 1 (USA→SIN)"><input style={S.input} type="number" value={f.fee_1} onChange={set("fee_1")} placeholder="0" /></Field>
-                  <Field label="Clearance fee"><input style={S.input} type="number" value={f.fee_clearance} onChange={set("fee_clearance")} placeholder="0" /></Field>
+                  <Field label="Seafreight 1 (USA→SIN)">
+                    <div style={{display:"flex",gap:4}}>
+                      <input style={{...S.input,flex:1}} type="number" value={f.fee_1} onChange={set("fee_1")} placeholder="0"/>
+                      <select style={{...S.input,width:65}} value={f.fee_1_cur} onChange={set("fee_1_cur")}><option value="USD">USD</option><option value="IDR">IDR</option></select>
+                    </div>
+                  </Field>
+                  <Field label="Clearance fee">
+                    <div style={{display:"flex",gap:4}}>
+                      <input style={{...S.input,flex:1}} type="number" value={f.fee_clearance} onChange={set("fee_clearance")} placeholder="0"/>
+                      <select style={{...S.input,width:65}} value={f.fee_clearance_cur} onChange={set("fee_clearance_cur")}><option value="USD">USD</option><option value="IDR">IDR</option></select>
+                    </div>
+                  </Field>
                 </div>
                 <div style={S.row2}>
-                  <Field label="Seafreight 2 (SIN→JKT)"><input style={S.input} type="number" value={f.fee_2} onChange={set("fee_2")} placeholder="0" /></Field>
-                  <Field label="Additional cost"><input style={S.input} type="number" value={f.fee_additional} onChange={set("fee_additional")} placeholder="0" /></Field>
+                  <Field label="Seafreight 2 (SIN→JKT)">
+                    <div style={{display:"flex",gap:4}}>
+                      <input style={{...S.input,flex:1}} type="number" value={f.fee_2} onChange={set("fee_2")} placeholder="0"/>
+                      <select style={{...S.input,width:65}} value={f.fee_2_cur} onChange={set("fee_2_cur")}><option value="USD">USD</option><option value="IDR">IDR</option></select>
+                    </div>
+                  </Field>
+                  <Field label="Additional cost">
+                    <div style={{display:"flex",gap:4}}>
+                      <input style={{...S.input,flex:1}} type="number" value={f.fee_additional} onChange={set("fee_additional")} placeholder="0"/>
+                      <select style={{...S.input,width:65}} value={f.fee_additional_cur} onChange={set("fee_additional_cur")}><option value="USD">USD</option><option value="IDR">IDR</option></select>
+                    </div>
+                  </Field>
                 </div>
                 <div style={S.row2}>
-                  <div style={{ display: "flex", gap: 6 }}>
-                    <select style={{ ...S.input, width: 70 }} value={f.price_currency} onChange={set("price_currency")}>
-                      <option value="USD">USD</option><option value="IDR">IDR</option>
-                    </select>
-                    <span style={{ fontSize: 12, color: "var(--ink-3)", alignSelf: "center" }}>Currency</span>
-                  </div>
-                  <Field label="CBM override (optional)">
-                    <input style={S.input} type="number" value={f.cbm_override} onChange={set("cbm_override")} placeholder="Leave blank to auto-calculate" />
+                  <Field label="USD → IDR rate (manual)">
+                    <input style={S.input} type="number" value={f.manual_fx_rate} onChange={set("manual_fx_rate")} placeholder={`e.g. ${ctx.liveFx?.usd_idr || 15850}`}/>
+                  </Field>
+                  <div></div>
+                </div>
+                <div style={S.row2}>
+                  <Field label="CBM override USA→SIN (optional)">
+                    <input style={S.input} type="number" value={f.cbm_us_sg} onChange={set("cbm_us_sg")} placeholder="Auto-calculated"/>
+                  </Field>
+                  <Field label="CBM override SIN→JKT (optional)">
+                    <input style={S.input} type="number" value={f.cbm_sg_id} onChange={set("cbm_sg_id")} placeholder="Auto-calculated"/>
                   </Field>
                 </div>
                 <div style={S.totalBar}>
-                  <span>SF1: {fmtPrice(+f.fee_1||0)}</span>
-                  <span>+ Clear: {fmtPrice(+f.fee_clearance||0)}</span>
-                  <span>+ SF2: {fmtPrice(+f.fee_2||0)}</span>
-                  <span>+ Add: {fmtPrice(+f.fee_additional||0)}</span>
-                  <span style={{ fontWeight: 700 }}>Total: {fmtPrice(grandTotal)}</span>
+                  <span>SF1: {fmtFee(+f.fee_1,f.fee_1_cur)}</span>
+                  <span>+ Clear: {fmtFee(+f.fee_clearance,f.fee_clearance_cur)}</span>
+                  <span>+ SF2: {fmtFee(+f.fee_2,f.fee_2_cur)}</span>
+                  <span>+ Add: {fmtFee(+f.fee_additional,f.fee_additional_cur)}</span>
+                  <span style={{fontWeight:700}}>Total (IDR): {fmtIDR(grandTotalIDR)}</span>
                 </div>
               </>)}
             </div>

@@ -42,10 +42,19 @@ export default function Dashboard() {
   const quote = (o) => {
     const s = shipmentOf(o.shipment_id);
     const div = courierOf(s?.courier_id)?.divisor ?? 5000;
-    const { vol, charged, basis, minApplied } = chargeable(
-      { l:o.dim_l_cm, w:o.dim_w_cm, h:o.dim_h_cm }, o.weight_kg, div);
+    // Use packages array if available, otherwise fall back to single weight/dims
+    const pkgs = o.packages && o.packages.length > 0
+      ? o.packages
+      : [{ weight: +o.weight_kg, l: +o.dim_l_cm, w: +o.dim_w_cm, h: +o.dim_h_cm }];
+    let totalRaw = 0, totalVol = 0, totalActual = 0;
+    pkgs.forEach(p => {
+      const ch = chargeable({ l: +p.l, w: +p.w, h: +p.h }, +p.weight, div);
+      totalRaw += ch.raw; totalVol += ch.vol; totalActual += +p.weight;
+    });
+    const charged = Math.ceil(totalRaw * 2) / 2; // round total to 0.5
+    const basis = totalVol > totalActual ? "volumetric" : "actual";
     const rate = Number(o.price_per_kg) || custRate(o.customer_id);
-    return { vol, charged, basis, minApplied, rate, price: charged*rate, divisor: div };
+    return { vol: totalVol, charged, basis, minApplied: totalRaw <= 3, rate, price: charged * rate, divisor: div, pkgCount: pkgs.length };
   };
   const shipCostIDR = (sid) => costsFor(sid).reduce((a,c)=>a+toIDR(c.amount,c.currency,D.fx),0);
   const orderCostIDR = (o) => {
