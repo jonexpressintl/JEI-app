@@ -43,6 +43,7 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
     fee_2_cur: "IDR",
     fee_additional_cur: "USD",
     manual_fx_rate: "",
+    manual_sgd_rate: "",
     air_sea_option: "weight",
     cbm_us_sg: "",
     cbm_sg_id: "",
@@ -111,19 +112,20 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
     grandTotal = (+f.fee_1 || 0) + (+f.fee_clearance || 0) + (+f.fee_2 || 0) + (+f.fee_additional || 0);
   }
 
-  const fmtPrice = (n) => f.price_currency === "USD" ? `$${Number(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : fmtIDR(n);
-  const fmtFee = (n, cur) => cur === "USD" ? `$${Number(n||0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : fmtIDR(n||0);
+  const fmtPrice = (n) => f.price_currency === "USD" ? `$${Number(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : f.price_currency === "SGD" ? `S$${Number(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : fmtIDR(n);
+  const fmtFee = (n, cur) => cur === "USD" ? `$${Number(n||0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : cur === "SGD" ? `S$${Number(n||0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : fmtIDR(n||0);
 
-  // Convert a fee to IDR using manual rate
-  const fxRate = +f.manual_fx_rate || ctx.liveFx?.usd_idr || 15850;
-  const toIDRFee = (amt, cur) => cur === "USD" ? (+amt || 0) * fxRate : (+amt || 0);
+  // Convert any fee to IDR using manual rates
+  const fxUSD = +f.manual_fx_rate || ctx.liveFx?.usd_idr || 15850;
+  const fxSGD = +f.manual_sgd_rate || ctx.liveFx?.sgd_idr || 11900;
+  const toIDRFee = (amt, cur) => cur === "USD" ? (+amt || 0) * fxUSD : cur === "SGD" ? (+amt || 0) * fxSGD : (+amt || 0);
 
-  // Grand total in IDR (all fees converted)
+  // Grand total always in IDR (all fees converted)
   const grandTotalIDR = (() => {
     if (feeMode === "air_air") {
-      return (weightPrice * (f.price_currency === "USD" ? fxRate : 1)) + toIDRFee(+f.fee_additional, f.fee_additional_cur);
+      return toIDRFee(weightPrice, f.price_currency) + toIDRFee(+f.fee_additional, f.fee_additional_cur);
     } else if (feeMode === "air_sea" && f.air_sea_option === "weight") {
-      return (weightPrice * (f.price_currency === "USD" ? fxRate : 1)) + toIDRFee(+f.fee_additional, f.fee_additional_cur);
+      return toIDRFee(weightPrice, f.price_currency) + toIDRFee(+f.fee_additional, f.fee_additional_cur);
     } else {
       return toIDRFee(+f.fee_1, f.fee_1_cur) + toIDRFee(+f.fee_clearance, f.fee_clearance_cur) + toIDRFee(+f.fee_2, f.fee_2_cur) + toIDRFee(+f.fee_additional, f.fee_additional_cur);
     }
@@ -355,21 +357,34 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
               {feeMode === "air_air" && (<>
                 <div style={S.row2}>
                   <Field label="Rate per kg">
-                    <div style={{ display: "flex", gap: 6 }}>
+                    <div style={{ display: "flex", gap: 4 }}>
                       <input style={{ ...S.input, flex: 1 }} type="number" value={f.price_per_kg} onChange={set("price_per_kg")} />
-                      <select style={{ ...S.input, width: 70 }} value={f.price_currency} onChange={set("price_currency")}>
-                        <option value="USD">USD</option><option value="IDR">IDR</option>
+                      <select style={{ ...S.input, width: 65 }} value={f.price_currency} onChange={set("price_currency")}>
+                        <option value="USD">USD</option><option value="SGD">SGD</option><option value="IDR">IDR</option>
                       </select>
                     </div>
                   </Field>
                   <Field label="Additional cost">
-                    <input style={S.input} type="number" value={f.fee_additional} onChange={set("fee_additional")} placeholder="0" />
+                    <div style={{ display: "flex", gap: 4 }}>
+                      <input style={{ ...S.input, flex: 1 }} type="number" value={f.fee_additional} onChange={set("fee_additional")} placeholder="0" />
+                      <select style={{ ...S.input, width: 65 }} value={f.fee_additional_cur} onChange={set("fee_additional_cur")}>
+                        <option value="USD">USD</option><option value="SGD">SGD</option><option value="IDR">IDR</option>
+                      </select>
+                    </div>
+                  </Field>
+                </div>
+                <div style={S.row2}>
+                  <Field label="USD → IDR rate">
+                    <input style={S.input} type="number" value={f.manual_fx_rate} onChange={set("manual_fx_rate")} placeholder={`e.g. ${ctx.liveFx?.usd_idr || 15850}`}/>
+                  </Field>
+                  <Field label="SGD → IDR rate">
+                    <input style={S.input} type="number" value={f.manual_sgd_rate} onChange={set("manual_sgd_rate")} placeholder={`e.g. ${ctx.liveFx?.sgd_idr || 11900}`}/>
                   </Field>
                 </div>
                 <div style={S.totalBar}>
-                  <span>Weight: {fmtPrice(weightPrice)}</span>
-                  <span>+ Additional: {fmtPrice(+f.fee_additional || 0)}</span>
-                  <span style={{ fontWeight: 700 }}>Total: {fmtPrice(grandTotal)}</span>
+                  <span>Weight: {fmtFee(weightPrice, f.price_currency)}</span>
+                  <span>+ Additional: {fmtFee(+f.fee_additional||0, f.fee_additional_cur)}</span>
+                  <span style={{ fontWeight: 700 }}>Total (IDR): {fmtIDR(grandTotalIDR)}</span>
                 </div>
               </>)}
 
@@ -385,34 +400,47 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
                 {f.air_sea_option === "weight" ? (<>
                   <div style={S.row2}>
                     <Field label="Rate per kg">
-                      <div style={{ display: "flex", gap: 6 }}>
+                      <div style={{ display: "flex", gap: 4 }}>
                         <input style={{ ...S.input, flex: 1 }} type="number" value={f.price_per_kg} onChange={set("price_per_kg")} />
-                        <select style={{ ...S.input, width: 70 }} value={f.price_currency} onChange={set("price_currency")}>
-                          <option value="USD">USD</option><option value="IDR">IDR</option>
+                        <select style={{ ...S.input, width: 65 }} value={f.price_currency} onChange={set("price_currency")}>
+                          <option value="USD">USD</option><option value="SGD">SGD</option><option value="IDR">IDR</option>
                         </select>
                       </div>
                     </Field>
                     <Field label="Additional cost">
-                      <input style={S.input} type="number" value={f.fee_additional} onChange={set("fee_additional")} placeholder="0" />
+                      <div style={{ display: "flex", gap: 4 }}>
+                        <input style={{ ...S.input, flex: 1 }} type="number" value={f.fee_additional} onChange={set("fee_additional")} placeholder="0" />
+                        <select style={{ ...S.input, width: 65 }} value={f.fee_additional_cur} onChange={set("fee_additional_cur")}>
+                          <option value="USD">USD</option><option value="SGD">SGD</option><option value="IDR">IDR</option>
+                        </select>
+                      </div>
+                    </Field>
+                  </div>
+                  <div style={S.row2}>
+                    <Field label="USD → IDR rate">
+                      <input style={S.input} type="number" value={f.manual_fx_rate} onChange={set("manual_fx_rate")} placeholder={`e.g. ${ctx.liveFx?.usd_idr || 15850}`}/>
+                    </Field>
+                    <Field label="SGD → IDR rate">
+                      <input style={S.input} type="number" value={f.manual_sgd_rate} onChange={set("manual_sgd_rate")} placeholder={`e.g. ${ctx.liveFx?.sgd_idr || 11900}`}/>
                     </Field>
                   </div>
                   <div style={S.totalBar}>
-                    <span>Weight: {fmtPrice(weightPrice)}</span>
-                    <span>+ Additional: {fmtPrice(+f.fee_additional || 0)}</span>
-                    <span style={{ fontWeight: 700 }}>Total: {fmtPrice(grandTotal)}</span>
+                    <span>Weight: {fmtFee(weightPrice, f.price_currency)}</span>
+                    <span>+ Additional: {fmtFee(+f.fee_additional||0, f.fee_additional_cur)}</span>
+                    <span style={{ fontWeight: 700 }}>Total (IDR): {fmtIDR(grandTotalIDR)}</span>
                   </div>
                 </>) : (<>
                   <div style={S.row2}>
                     <Field label="Airfreight fee">
                       <div style={{display:"flex",gap:4}}>
                         <input style={{...S.input,flex:1}} type="number" value={f.fee_1} onChange={set("fee_1")} placeholder="0"/>
-                        <select style={{...S.input,width:65}} value={f.fee_1_cur} onChange={set("fee_1_cur")}><option value="USD">USD</option><option value="IDR">IDR</option></select>
+                        <select style={{...S.input,width:65}} value={f.fee_1_cur} onChange={set("fee_1_cur")}><option value="USD">USD</option><option value="SGD">SGD</option><option value="IDR">IDR</option></select>
                       </div>
                     </Field>
                     <Field label="Clearance fee">
                       <div style={{display:"flex",gap:4}}>
                         <input style={{...S.input,flex:1}} type="number" value={f.fee_clearance} onChange={set("fee_clearance")} placeholder="0"/>
-                        <select style={{...S.input,width:65}} value={f.fee_clearance_cur} onChange={set("fee_clearance_cur")}><option value="USD">USD</option><option value="IDR">IDR</option></select>
+                        <select style={{...S.input,width:65}} value={f.fee_clearance_cur} onChange={set("fee_clearance_cur")}><option value="USD">USD</option><option value="SGD">SGD</option><option value="IDR">IDR</option></select>
                       </div>
                     </Field>
                   </div>
@@ -420,19 +448,24 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
                     <Field label="Seafreight fee">
                       <div style={{display:"flex",gap:4}}>
                         <input style={{...S.input,flex:1}} type="number" value={f.fee_2} onChange={set("fee_2")} placeholder="0"/>
-                        <select style={{...S.input,width:65}} value={f.fee_2_cur} onChange={set("fee_2_cur")}><option value="USD">USD</option><option value="IDR">IDR</option></select>
+                        <select style={{...S.input,width:65}} value={f.fee_2_cur} onChange={set("fee_2_cur")}><option value="USD">USD</option><option value="SGD">SGD</option><option value="IDR">IDR</option></select>
                       </div>
                     </Field>
                     <Field label="Additional cost">
                       <div style={{display:"flex",gap:4}}>
                         <input style={{...S.input,flex:1}} type="number" value={f.fee_additional} onChange={set("fee_additional")} placeholder="0"/>
-                        <select style={{...S.input,width:65}} value={f.fee_additional_cur} onChange={set("fee_additional_cur")}><option value="USD">USD</option><option value="IDR">IDR</option></select>
+                        <select style={{...S.input,width:65}} value={f.fee_additional_cur} onChange={set("fee_additional_cur")}><option value="USD">USD</option><option value="SGD">SGD</option><option value="IDR">IDR</option></select>
                       </div>
                     </Field>
                   </div>
-                  <Field label="USD → IDR rate (manual)">
-                    <input style={{...S.input,maxWidth:200}} type="number" value={f.manual_fx_rate} onChange={set("manual_fx_rate")} placeholder={`e.g. ${ctx.liveFx?.usd_idr || 15850}`}/>
-                  </Field>
+                  <div style={S.row2}>
+                    <Field label="USD → IDR rate">
+                      <input style={S.input} type="number" value={f.manual_fx_rate} onChange={set("manual_fx_rate")} placeholder={`e.g. ${ctx.liveFx?.usd_idr || 15850}`}/>
+                    </Field>
+                    <Field label="SGD → IDR rate">
+                      <input style={S.input} type="number" value={f.manual_sgd_rate} onChange={set("manual_sgd_rate")} placeholder={`e.g. ${ctx.liveFx?.sgd_idr || 11900}`}/>
+                    </Field>
+                  </div>
                   <div style={S.totalBar}>
                     <span>Air: {fmtFee(+f.fee_1,f.fee_1_cur)}</span>
                     <span>+ Clear: {fmtFee(+f.fee_clearance,f.fee_clearance_cur)}</span>
@@ -449,13 +482,13 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
                   <Field label="Seafreight 1 (USA→SIN)">
                     <div style={{display:"flex",gap:4}}>
                       <input style={{...S.input,flex:1}} type="number" value={f.fee_1} onChange={set("fee_1")} placeholder="0"/>
-                      <select style={{...S.input,width:65}} value={f.fee_1_cur} onChange={set("fee_1_cur")}><option value="USD">USD</option><option value="IDR">IDR</option></select>
+                      <select style={{...S.input,width:65}} value={f.fee_1_cur} onChange={set("fee_1_cur")}><option value="USD">USD</option><option value="SGD">SGD</option><option value="IDR">IDR</option></select>
                     </div>
                   </Field>
                   <Field label="Clearance fee">
                     <div style={{display:"flex",gap:4}}>
                       <input style={{...S.input,flex:1}} type="number" value={f.fee_clearance} onChange={set("fee_clearance")} placeholder="0"/>
-                      <select style={{...S.input,width:65}} value={f.fee_clearance_cur} onChange={set("fee_clearance_cur")}><option value="USD">USD</option><option value="IDR">IDR</option></select>
+                      <select style={{...S.input,width:65}} value={f.fee_clearance_cur} onChange={set("fee_clearance_cur")}><option value="USD">USD</option><option value="SGD">SGD</option><option value="IDR">IDR</option></select>
                     </div>
                   </Field>
                 </div>
@@ -463,21 +496,23 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
                   <Field label="Seafreight 2 (SIN→JKT)">
                     <div style={{display:"flex",gap:4}}>
                       <input style={{...S.input,flex:1}} type="number" value={f.fee_2} onChange={set("fee_2")} placeholder="0"/>
-                      <select style={{...S.input,width:65}} value={f.fee_2_cur} onChange={set("fee_2_cur")}><option value="USD">USD</option><option value="IDR">IDR</option></select>
+                      <select style={{...S.input,width:65}} value={f.fee_2_cur} onChange={set("fee_2_cur")}><option value="USD">USD</option><option value="SGD">SGD</option><option value="IDR">IDR</option></select>
                     </div>
                   </Field>
                   <Field label="Additional cost">
                     <div style={{display:"flex",gap:4}}>
                       <input style={{...S.input,flex:1}} type="number" value={f.fee_additional} onChange={set("fee_additional")} placeholder="0"/>
-                      <select style={{...S.input,width:65}} value={f.fee_additional_cur} onChange={set("fee_additional_cur")}><option value="USD">USD</option><option value="IDR">IDR</option></select>
+                      <select style={{...S.input,width:65}} value={f.fee_additional_cur} onChange={set("fee_additional_cur")}><option value="USD">USD</option><option value="SGD">SGD</option><option value="IDR">IDR</option></select>
                     </div>
                   </Field>
                 </div>
                 <div style={S.row2}>
-                  <Field label="USD → IDR rate (manual)">
+                  <Field label="USD → IDR rate">
                     <input style={S.input} type="number" value={f.manual_fx_rate} onChange={set("manual_fx_rate")} placeholder={`e.g. ${ctx.liveFx?.usd_idr || 15850}`}/>
                   </Field>
-                  <div></div>
+                  <Field label="SGD → IDR rate">
+                    <input style={S.input} type="number" value={f.manual_sgd_rate} onChange={set("manual_sgd_rate")} placeholder={`e.g. ${ctx.liveFx?.sgd_idr || 11900}`}/>
+                  </Field>
                 </div>
                 <div style={S.row2}>
                   <Field label="CBM override USA→SIN (optional)">
