@@ -98,19 +98,14 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
 
   const weightPrice = totalCharged * (+f.price_per_kg);
 
-  // Grand total depends on combo + sub-option
-  let grandTotal = 0;
-  if (feeMode === "air_air") {
-    grandTotal = weightPrice + (+f.fee_additional || 0);
-  } else if (feeMode === "air_sea") {
-    if (f.air_sea_option === "weight") {
-      grandTotal = weightPrice + (+f.fee_additional || 0);
-    } else {
-      grandTotal = (+f.fee_1 || 0) + (+f.fee_clearance || 0) + (+f.fee_2 || 0) + (+f.fee_additional || 0);
-    }
-  } else {
-    grandTotal = (+f.fee_1 || 0) + (+f.fee_clearance || 0) + (+f.fee_2 || 0) + (+f.fee_additional || 0);
-  }
+  // CBM auto-calculated from packages (L×W×H in cm → cubic meters)
+  const autoCBM = metricPkgs.reduce((a, p) => a + (p.l * p.w * p.h) / 1000000, 0);
+  const cbmUsSg = +f.cbm_us_sg || autoCBM;
+  const cbmSgId = +f.cbm_sg_id || autoCBM;
+
+  // Seafreight totals = rate/CBM × CBM
+  const sf1Total = (+f.fee_1 || 0) * cbmUsSg;  // fee_1 is rate per CBM
+  const sf2Total = (+f.fee_2 || 0) * cbmSgId;  // fee_2 is rate per CBM
 
   const fmtPrice = (n) => f.price_currency === "USD" ? `$${Number(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : f.price_currency === "SGD" ? `S$${Number(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : fmtIDR(n);
   const fmtFee = (n, cur) => cur === "USD" ? `$${Number(n||0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : cur === "SGD" ? `S$${Number(n||0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : fmtIDR(n||0);
@@ -126,8 +121,12 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
       return toIDRFee(weightPrice, f.price_currency) + toIDRFee(+f.fee_additional, f.fee_additional_cur);
     } else if (feeMode === "air_sea" && f.air_sea_option === "weight") {
       return toIDRFee(weightPrice, f.price_currency) + toIDRFee(+f.fee_additional, f.fee_additional_cur);
+    } else if (feeMode === "air_sea") {
+      // breakdown: airfreight (flat) + clearance (flat) + seafreight (rate×CBM) + additional
+      return toIDRFee(+f.fee_1, f.fee_1_cur) + toIDRFee(+f.fee_clearance, f.fee_clearance_cur) + toIDRFee(sf2Total, f.fee_2_cur) + toIDRFee(+f.fee_additional, f.fee_additional_cur);
     } else {
-      return toIDRFee(+f.fee_1, f.fee_1_cur) + toIDRFee(+f.fee_clearance, f.fee_clearance_cur) + toIDRFee(+f.fee_2, f.fee_2_cur) + toIDRFee(+f.fee_additional, f.fee_additional_cur);
+      // sea+sea: both seafreight are rate×CBM
+      return toIDRFee(sf1Total, f.fee_1_cur) + toIDRFee(+f.fee_clearance, f.fee_clearance_cur) + toIDRFee(sf2Total, f.fee_2_cur) + toIDRFee(+f.fee_additional, f.fee_additional_cur);
     }
   })();
 
@@ -445,7 +444,7 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
                     </Field>
                   </div>
                   <div style={S.row2}>
-                    <Field label="Seafreight fee">
+                    <Field label="Seafreight rate/CBM (SIN→JKT)">
                       <div style={{display:"flex",gap:4}}>
                         <input style={{...S.input,flex:1}} type="number" value={f.fee_2} onChange={set("fee_2")} placeholder="0"/>
                         <select style={{...S.input,width:65}} value={f.fee_2_cur} onChange={set("fee_2_cur")}><option value="USD">USD</option><option value="SGD">SGD</option><option value="IDR">IDR</option></select>
@@ -458,6 +457,9 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
                       </div>
                     </Field>
                   </div>
+                  <Field label={`CBM SIN→JKT (auto: ${autoCBM.toFixed(3)})`}>
+                    <input style={{...S.input,maxWidth:200}} type="number" value={f.cbm_sg_id} onChange={set("cbm_sg_id")} placeholder={autoCBM.toFixed(3)}/>
+                  </Field>
                   <div style={S.row2}>
                     <Field label="USD → IDR rate">
                       <input style={S.input} type="number" value={f.manual_fx_rate} onChange={set("manual_fx_rate")} placeholder={`e.g. ${ctx.liveFx?.usd_idr || 15850}`}/>
@@ -469,9 +471,11 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
                   <div style={S.totalBar}>
                     <span>Air: {fmtFee(+f.fee_1,f.fee_1_cur)}</span>
                     <span>+ Clear: {fmtFee(+f.fee_clearance,f.fee_clearance_cur)}</span>
-                    <span>+ Sea: {fmtFee(+f.fee_2,f.fee_2_cur)}</span>
+                    <span>+ Sea: {fmtFee(+f.fee_2,f.fee_2_cur)}/CBM × {cbmSgId.toFixed(2)} = {fmtFee(sf2Total,f.fee_2_cur)}</span>
                     <span>+ Add: {fmtFee(+f.fee_additional,f.fee_additional_cur)}</span>
-                    <span style={{fontWeight:700}}>Total (IDR): {fmtIDR(grandTotalIDR)}</span>
+                  </div>
+                  <div style={{...S.totalBar,marginTop:4,background:"var(--good-bg)"}}>
+                    <span style={{fontWeight:700,fontSize:14}}>Total (IDR): {fmtIDR(grandTotalIDR)}</span>
                   </div>
                 </>)}
               </>)}
@@ -479,7 +483,7 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
               {/* ── SEA + SEA: per-fee currency + dual CBM + manual FX ── */}
               {feeMode === "sea_sea" && (<>
                 <div style={S.row2}>
-                  <Field label="Seafreight 1 (USA→SIN)">
+                  <Field label="SF1 rate/CBM (USA→SIN)">
                     <div style={{display:"flex",gap:4}}>
                       <input style={{...S.input,flex:1}} type="number" value={f.fee_1} onChange={set("fee_1")} placeholder="0"/>
                       <select style={{...S.input,width:65}} value={f.fee_1_cur} onChange={set("fee_1_cur")}><option value="USD">USD</option><option value="SGD">SGD</option><option value="IDR">IDR</option></select>
@@ -493,7 +497,7 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
                   </Field>
                 </div>
                 <div style={S.row2}>
-                  <Field label="Seafreight 2 (SIN→JKT)">
+                  <Field label="SF2 rate/CBM (SIN→JKT)">
                     <div style={{display:"flex",gap:4}}>
                       <input style={{...S.input,flex:1}} type="number" value={f.fee_2} onChange={set("fee_2")} placeholder="0"/>
                       <select style={{...S.input,width:65}} value={f.fee_2_cur} onChange={set("fee_2_cur")}><option value="USD">USD</option><option value="SGD">SGD</option><option value="IDR">IDR</option></select>
@@ -515,19 +519,21 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
                   </Field>
                 </div>
                 <div style={S.row2}>
-                  <Field label="CBM override USA→SIN (optional)">
-                    <input style={S.input} type="number" value={f.cbm_us_sg} onChange={set("cbm_us_sg")} placeholder="Auto-calculated"/>
+                  <Field label={`CBM USA→SIN (auto: ${autoCBM.toFixed(3)})`}>
+                    <input style={S.input} type="number" value={f.cbm_us_sg} onChange={set("cbm_us_sg")} placeholder={autoCBM.toFixed(3)}/>
                   </Field>
-                  <Field label="CBM override SIN→JKT (optional)">
-                    <input style={S.input} type="number" value={f.cbm_sg_id} onChange={set("cbm_sg_id")} placeholder="Auto-calculated"/>
+                  <Field label={`CBM SIN→JKT (auto: ${autoCBM.toFixed(3)})`}>
+                    <input style={S.input} type="number" value={f.cbm_sg_id} onChange={set("cbm_sg_id")} placeholder={autoCBM.toFixed(3)}/>
                   </Field>
                 </div>
                 <div style={S.totalBar}>
-                  <span>SF1: {fmtFee(+f.fee_1,f.fee_1_cur)}</span>
+                  <span>SF1: {fmtFee(+f.fee_1,f.fee_1_cur)}/CBM × {cbmUsSg.toFixed(2)} = {fmtFee(sf1Total,f.fee_1_cur)}</span>
                   <span>+ Clear: {fmtFee(+f.fee_clearance,f.fee_clearance_cur)}</span>
-                  <span>+ SF2: {fmtFee(+f.fee_2,f.fee_2_cur)}</span>
+                  <span>+ SF2: {fmtFee(+f.fee_2,f.fee_2_cur)}/CBM × {cbmSgId.toFixed(2)} = {fmtFee(sf2Total,f.fee_2_cur)}</span>
                   <span>+ Add: {fmtFee(+f.fee_additional,f.fee_additional_cur)}</span>
-                  <span style={{fontWeight:700}}>Total (IDR): {fmtIDR(grandTotalIDR)}</span>
+                </div>
+                <div style={{...S.totalBar,marginTop:4,background:"var(--good-bg)"}}>
+                  <span style={{fontWeight:700,fontSize:14}}>Total (IDR): {fmtIDR(grandTotalIDR)}</span>
                 </div>
               </>)}
             </div>
