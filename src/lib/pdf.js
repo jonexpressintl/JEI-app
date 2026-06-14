@@ -1,6 +1,7 @@
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
 import { chargeable, fmtIDR } from "./pricing";
+import { LOGO } from "./logo";
 
 const INK = [33, 33, 33];
 const GRAY = [120, 120, 120];
@@ -27,17 +28,32 @@ function fmtUSD(n) { return "$" + Number(n).toLocaleString("en-US", { minimumFra
 function fmtRp(n) { return "Rp " + Number(Math.round(n)).toLocaleString("id-ID"); }
 function fmtAmt(n, cur) { return cur === "USD" ? fmtUSD(n) : fmtRp(n); }
 
+// Format a date string (YYYY-MM-DD or similar) as DD/MM/YYYY
+function fmtDate(d) {
+  if (!d) return "—";
+  const dt = new Date(d);
+  if (isNaN(dt.getTime())) return String(d);
+  const dd = String(dt.getDate()).padStart(2, "0");
+  const mm = String(dt.getMonth() + 1).padStart(2, "0");
+  return `${dd}/${mm}/${dt.getFullYear()}`;
+}
+
 function companyBlock(doc, startY) {
   let y = startY;
+  // Logo top-left
+  try {
+    doc.addImage(LOGO, "JPEG", M.left, y - 4, 28, 28);
+  } catch (e) { /* logo optional */ }
+  const textX = M.left + 33;
   doc.setFontSize(10); doc.setFont("helvetica", "bold"); doc.setTextColor(...INK);
-  doc.text(COMPANY.name, M.left, y); y += 6;
+  doc.text(COMPANY.name, textX, y); y += 6;
   doc.setFontSize(8); doc.setFont("helvetica", "normal");
-  doc.text(COMPANY.pic, M.left, y); y += 4;
-  COMPANY.addr.forEach(l => { doc.text(l, M.left, y); y += 4; });
-  doc.text(COMPANY.phone, M.left, y); y += 4;
-  doc.setTextColor(0, 0, 180); doc.text(COMPANY.email, M.left, y);
+  doc.text(COMPANY.pic, textX, y); y += 4;
+  COMPANY.addr.forEach(l => { doc.text(l, textX, y); y += 4; });
+  doc.text(COMPANY.phone, textX, y); y += 4;
+  doc.setTextColor(0, 0, 180); doc.text(COMPANY.email, textX, y);
   doc.setTextColor(...INK);
-  return y + 6;
+  return Math.max(y + 6, M.left + 28 + 4); // ensure clears logo height too
 }
 
 // ═══════════════════════ INVOICE ═══════════════════════
@@ -49,33 +65,37 @@ export function generateInvoicePDF(order, customer, shipment, courier, liveFx) {
   doc.setFontSize(24); doc.setFont("helvetica", "bold"); doc.setTextColor(...ACCENT);
   doc.text("Invoice", 195, 20, { align: "right" });
 
-  const cy = companyBlock(doc, 18);
+  const cy = companyBlock(doc, 22);
 
-  // Info box
-  const bx = 110, by = 18;
+  // Info box — 4 rows: Invoice No, Invoice Date, Bill To, Ship to address
+  const bx = 110, by = 22, bw = 85;
+  const addrLines = customer?.address ? doc.splitTextToSize(customer.address, bw - 34) : ["—"];
+  const rowH = 8;
+  const bh = rowH * 3 + Math.max(addrLines.length, 1) * 4 + 4;
+
   doc.setDrawColor(...LN); doc.setLineWidth(0.3);
-  doc.rect(bx, by, 85, 30);
-  doc.line(bx, by + 10, bx + 85, by + 10);
-  doc.line(bx, by + 20, bx + 85, by + 20);
-  doc.line(bx + 32, by, bx + 32, by + 30);
+  doc.rect(bx, by, bw, bh);
+  doc.line(bx, by + rowH, bx + bw, by + rowH);
+  doc.line(bx, by + rowH * 2, bx + bw, by + rowH * 2);
+  doc.line(bx, by + rowH * 3, bx + bw, by + rowH * 3);
+  doc.line(bx + 30, by, bx + 30, by + bh);
 
   const invNo = "INV-JEI/" + String(order.id).replace("ORD-", "");
   doc.setFontSize(7.5); doc.setFont("helvetica", "normal"); doc.setTextColor(...GRAY);
-  doc.text("Invoice No.", bx + 2, by + 5);
-  doc.text("Invoice Date:", bx + 2, by + 15);
-  doc.text("Bill To:", bx + 2, by + 25);
-  doc.setFont("helvetica", "bold"); doc.setTextColor(...INK); doc.setFontSize(8.5);
-  doc.text(invNo, bx + 34, by + 5);
-  doc.setFont("helvetica", "normal"); doc.setFontSize(8);
-  doc.text(order.order_date || "", bx + 34, by + 15);
-  doc.setFont("helvetica", "bold");
-  doc.text(customer?.name || "—", bx + 34, by + 25);
+  doc.text("Invoice No.", bx + 2, by + 5.5);
+  doc.text("Invoice Date", bx + 2, by + rowH + 5.5);
+  doc.text("Bill To", bx + 2, by + rowH * 2 + 5.5);
+  doc.text("Ship to", bx + 2, by + rowH * 3 + 5);
 
-  // Ship to address below box
-  if (customer?.address) {
-    doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(...GRAY);
-    doc.text("Ship to: " + customer.address, bx, by + 36);
-  }
+  doc.setFont("helvetica", "bold"); doc.setTextColor(...INK); doc.setFontSize(8.5);
+  doc.text(invNo, bx + 32, by + 5.5);
+  doc.setFont("helvetica", "normal"); doc.setFontSize(8);
+  doc.text(fmtDate(order.order_date), bx + 32, by + rowH + 5.5);
+  doc.setFont("helvetica", "bold");
+  doc.text(customer?.name || "—", bx + 32, by + rowH * 2 + 5.5);
+  doc.setFont("helvetica", "normal"); doc.setFontSize(7.5); doc.setTextColor(...GRAY);
+  addrLines.forEach((l, i) => doc.text(l, bx + 32, by + rowH * 3 + 5 + i * 3.8));
+  doc.setTextColor(...INK);
 
   // Line items — from feeLines (multi-currency, computed by quote())
   const isAirM = (m) => m && m !== "Seafreight";
@@ -106,9 +126,9 @@ export function generateInvoicePDF(order, customer, shipment, courier, liveFx) {
     if (+order.fee_2) feeLines.push({ label: `Seafreight (${cbmB.toFixed(2)} CBM)`, amount: sf2Total, currency: order.fee_2_cur || "IDR" });
     if (+order.fee_additional) feeLines.push({ label: "Additional cost", amount: +order.fee_additional, currency: order.fee_additional_cur || "USD" });
   } else {
-    if (+order.fee_1) feeLines.push({ label: `Seafreight USA→SIN (${cbmA.toFixed(2)} CBM)`, amount: sf1Total, currency: order.fee_1_cur || "USD" });
+    if (+order.fee_1) feeLines.push({ label: `Seafreight USA->SIN (${cbmA.toFixed(2)} CBM)`, amount: sf1Total, currency: order.fee_1_cur || "USD" });
     if (+order.fee_clearance) feeLines.push({ label: "Clearance fee", amount: +order.fee_clearance, currency: order.fee_clearance_cur || "SGD" });
-    if (+order.fee_2) feeLines.push({ label: `Seafreight SIN→JKT (${cbmB.toFixed(2)} CBM)`, amount: sf2Total, currency: order.fee_2_cur || "IDR" });
+    if (+order.fee_2) feeLines.push({ label: `Seafreight SIN->JKT (${cbmB.toFixed(2)} CBM)`, amount: sf2Total, currency: order.fee_2_cur || "IDR" });
     if (+order.fee_additional) feeLines.push({ label: "Additional cost", amount: +order.fee_additional, currency: order.fee_additional_cur || "USD" });
   }
   (order.extra_costs||[]).forEach(ec => feeLines.push({ label: ec.label, amount: +ec.amount, currency: ec.currency || "IDR" }));
@@ -117,7 +137,7 @@ export function generateInvoicePDF(order, customer, shipment, courier, liveFx) {
   const toIDR = (amt, c) => c === "USD" ? (+amt||0) * fx.usd_idr : c === "SGD" ? (+amt||0) * fx.sgd_idr : (+amt||0);
 
   const t1 = autoTable(doc, {
-    startY: Math.max(cy, by + 40) + 2,
+    startY: Math.max(cy, by + bh) + 6,
     head: [["Description", "Amount", "In IDR"]],
     body: feeLines.length > 0 ? feeLines.map(l => [l.label, fmtAmt(l.amount, l.currency), fmtRp(toIDR(l.amount, l.currency))]) : [["No fee lines recorded", "", ""]],
     styles: { fontSize: 8.5, cellPadding: 5, textColor: INK, lineColor: LN, lineWidth: 0.3 },
@@ -132,8 +152,8 @@ export function generateInvoicePDF(order, customer, shipment, courier, liveFx) {
   autoTable(doc, {
     startY: (t1?.finalY ?? 100) + 4,
     body: [
-      [{ content: "USD → IDR rate", styles: { halign: "right" } }, fmtRp(fx.usd_idr)],
-      [{ content: "SGD → IDR rate", styles: { halign: "right" } }, fmtRp(fx.sgd_idr)],
+      [{ content: "USD -> IDR rate", styles: { halign: "right" } }, fmtRp(fx.usd_idr)],
+      [{ content: "SGD -> IDR rate", styles: { halign: "right" } }, fmtRp(fx.sgd_idr)],
       [{ content: "Sales Tax", styles: { halign: "right" } }, ""],
       [{ content: "Discount", styles: { halign: "right" } }, ""],
       [{ content: "Deposit Received", styles: { halign: "right" } }, ""],
@@ -175,15 +195,17 @@ export function generateQuotationPDF({ customerName, packages, divisor, courierN
   doc.setFontSize(16); doc.setFont("helvetica", "bold"); doc.setTextColor(255, 255, 255);
   doc.text("Quotation", 105, 9, { align: "center" });
 
-  // Company info (left)
+  // Company info (left) with logo
   let y = 22;
+  try { doc.addImage(LOGO, "JPEG", M.left, y - 4, 24, 24); } catch (e) {}
+  const tx = M.left + 28;
   doc.setFontSize(10); doc.setFont("helvetica", "bold"); doc.setTextColor(...INK);
-  doc.text(COMPANY.name, M.left, y); y += 5;
+  doc.text(COMPANY.name, tx, y); y += 5;
   doc.setFontSize(8); doc.setFont("helvetica", "normal");
-  doc.text(COMPANY.pic, M.left, y); y += 4;
-  COMPANY.addr.forEach(l => { doc.text(l, M.left, y); y += 4; });
-  doc.text(COMPANY.phone, M.left, y); y += 4;
-  doc.setTextColor(0, 0, 180); doc.text(COMPANY.email, M.left, y);
+  doc.text(COMPANY.pic, tx, y); y += 4;
+  COMPANY.addr.forEach(l => { doc.text(l, tx, y); y += 4; });
+  doc.text(COMPANY.phone, tx, y); y += 4;
+  doc.setTextColor(0, 0, 180); doc.text(COMPANY.email, tx, y);
   doc.setTextColor(...INK);
 
   // Quote info box (right)
@@ -204,7 +226,7 @@ export function generateQuotationPDF({ customerName, packages, divisor, courierN
   doc.setFont("helvetica", "bold"); doc.setTextColor(...INK); doc.setFontSize(8);
   doc.text(qno, bx + 30, by + 4.5);
   doc.setFont("helvetica", "normal");
-  doc.text(new Date().toLocaleDateString("en-US"), bx + 30, by + 10.5);
+  doc.text(fmtDate(new Date()), bx + 30, by + 10.5);
   doc.setFont("helvetica", "bold");
   doc.text(customerName || "—", bx + 30, by + 16.5);
   doc.setFont("helvetica", "normal");
