@@ -91,6 +91,23 @@ export function nextShipmentId(shipments) {
 }
 export const addShipment = (shipment) =>
   supabase.from("shipments").insert(shipment);
+
+// Add a shipment, retrying with incremented IDs if a unique constraint collision occurs.
+export async function addShipmentSafe(shipment, existingShipments) {
+  let id = shipment.id;
+  let num = parseInt(String(id).replace(/\D/g, ""), 10) || 2400;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const { error } = await addShipment({ ...shipment, id });
+    if (!error) return { id, error: null };
+    if (error.message && error.message.includes("duplicate key")) {
+      num += 1;
+      id = "SHP-" + num;
+      continue;
+    }
+    return { id, error };
+  }
+  return { id, error: { message: "Could not allocate a unique shipment ID after several attempts." } };
+}
 export const updateShipment = (id, patch) =>
   supabase.from("shipments").update(patch).eq("id", id);
 export const deleteShipment = (id) =>
