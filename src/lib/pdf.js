@@ -45,7 +45,7 @@ function companyBlock(doc, startY) {
     doc.addImage(LOGO, "JPEG", M.left, y - 4, 28, 28);
   } catch (e) { /* logo optional */ }
   const textX = M.left + 33;
-  doc.setFontSize(10); doc.setFont("helvetica", "bold"); doc.setTextColor(...INK);
+  doc.setFontSize(9); doc.setFont("helvetica", "bold"); doc.setTextColor(...INK);
   doc.text(COMPANY.name, textX, y); y += 6;
   doc.setFontSize(8); doc.setFont("helvetica", "normal");
   doc.text(COMPANY.pic, textX, y); y += 4;
@@ -68,7 +68,7 @@ export function generateInvoicePDF(order, customer, shipment, courier, liveFx) {
   const cy = companyBlock(doc, 22);
 
   // Info box — 4 rows: Invoice No, Invoice Date, Bill To, Ship to address
-  const bx = 110, by = 22, bw = 85;
+  const bx = 113, by = 22, bw = 82;
   const addrLines = customer?.address ? doc.splitTextToSize(customer.address, bw - 34) : ["—"];
   const rowH = 8;
   const bh = rowH * 3 + Math.max(addrLines.length, 1) * 4 + 4;
@@ -148,12 +148,17 @@ export function generateInvoicePDF(order, customer, shipment, courier, liveFx) {
 
   // Totals
   const totalIDR = feeLines.reduce((a,l)=>a+toIDR(l.amount,l.currency),0);
+  const usesUSD = feeLines.some(l => l.currency === "USD");
+  const usesSGD = feeLines.some(l => l.currency === "SGD");
+
+  const rateRows = [];
+  if (usesUSD) rateRows.push([{ content: "USD -> IDR rate", styles: { halign: "right" } }, fmtRp(fx.usd_idr)]);
+  if (usesSGD) rateRows.push([{ content: "SGD -> IDR rate", styles: { halign: "right" } }, fmtRp(fx.sgd_idr)]);
 
   autoTable(doc, {
     startY: (t1?.finalY ?? 100) + 4,
     body: [
-      [{ content: "USD -> IDR rate", styles: { halign: "right" } }, fmtRp(fx.usd_idr)],
-      [{ content: "SGD -> IDR rate", styles: { halign: "right" } }, fmtRp(fx.sgd_idr)],
+      ...rateRows,
       [{ content: "Sales Tax", styles: { halign: "right" } }, ""],
       [{ content: "Discount", styles: { halign: "right" } }, ""],
       [{ content: "Deposit Received", styles: { halign: "right" } }, ""],
