@@ -105,7 +105,7 @@ export default function Dashboard() {
     return shipCostIDR(o.shipment_id) * (Number(o.sell_idr)/tot);
   };
 
-  const ctx = { D, isOwner, custName, custRate, courierOf, shipmentOf, costsFor, quote, orderCostIDR, shipCostIDR, reload: D.reload, liveFx };
+  const ctx = { D, isOwner, custName, custRate, courierOf, shipmentOf, costsFor, quote, orderCostIDR, shipCostIDR, reload: D.reload, patchOrder: D.patchOrder, liveFx };
   const TABS = [
     {k:"orders",label:"Orders",icon:LayoutGrid},
     {k:"shipments",label:"Shipments",icon:Boxes},
@@ -546,7 +546,7 @@ function Invoices({ctx}){
 }
 
 function InvoiceDoc({ctx,order,onComplete,reload}){
-  const {D,custName,courierOf,shipmentOf,quote}=ctx;
+  const {D,custName,courierOf,shipmentOf,quote,patchOrder}=ctx;
   const q=quote(order);const s=shipmentOf(order.shipment_id);const c=courierOf(s?.courier_id);
   const invNo="INV-"+order.id.replace("ORD-","");
   const customer=D.customers.find(cu=>cu.id===order.customer_id);
@@ -567,24 +567,29 @@ function InvoiceDoc({ctx,order,onComplete,reload}){
 
   async function saveRates(){
     setSaving(true);
-    await updateOrder(order.id,{invoice_usd_rate:+usdRate||null,invoice_sgd_rate:+sgdRate||null,sell_idr:Math.round(grandTotalIDR)});
+    const patch={invoice_usd_rate:+usdRate||null,invoice_sgd_rate:+sgdRate||null,sell_idr:Math.round(grandTotalIDR)};
+    const {error}=await updateOrder(order.id,patch);
     setSaving(false);
-    reload&&reload();
+    if(!error) patchOrder?patchOrder(order.id,patch):reload&&reload();
   }
 
   async function addCost(){
     if(!newCostLabel.trim()||!newCostAmt) return;
     const extra=[...(order.extra_costs||[]),{label:newCostLabel.trim(),amount:+newCostAmt,currency:newCostCur}];
-    await updateOrder(order.id,{extra_costs:extra,sell_idr:Math.round(grandTotalIDR+toIDR(+newCostAmt,newCostCur))});
-    setNewCostLabel("");setNewCostAmt("");
-    reload&&reload();
+    const patch={extra_costs:extra,sell_idr:Math.round(grandTotalIDR+toIDR(+newCostAmt,newCostCur))};
+    const {error}=await updateOrder(order.id,patch);
+    if(!error){
+      setNewCostLabel("");setNewCostAmt("");
+      patchOrder?patchOrder(order.id,patch):reload&&reload();
+    }
   }
   async function removeCost(idx){
     const extra=(order.extra_costs||[]).filter((_,i)=>i!==idx);
     const removed=(order.extra_costs||[])[idx];
     const newTotal=grandTotalIDR-toIDR(removed.amount,removed.currency);
-    await updateOrder(order.id,{extra_costs:extra,sell_idr:Math.round(newTotal)});
-    reload&&reload();
+    const patch={extra_costs:extra,sell_idr:Math.round(newTotal)};
+    const {error}=await updateOrder(order.id,patch);
+    if(!error) patchOrder?patchOrder(order.id,patch):reload&&reload();
   }
 
   function downloadPDF(){
