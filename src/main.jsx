@@ -4,6 +4,7 @@ import { AuthProvider, useAuth } from "./lib/auth";
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 import PasscodeGate from "./pages/PasscodeGate";
+import ErrorBoundary from "./components/ErrorBoundary";
 
 function Root() {
   const { session, loading, passcodeCleared } = useAuth();
@@ -23,8 +24,10 @@ function Root() {
 
 ReactDOM.createRoot(document.getElementById("root")).render(
   <React.StrictMode>
-    <AuthProvider>
-      <Root />
-    </AuthProvider>
+    <ErrorBoundary>
+      <AuthProvider>
+        <Root />
+      </AuthProvider>
+    </ErrorBoundary>
   </React.StrictMode>
 );

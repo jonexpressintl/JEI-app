@@ -64,16 +64,16 @@ export default function Dashboard() {
     const chargedAuto = Math.ceil(totalRaw * 2) / 2; // round total to 0.5
     const charged = +o.charged_override || chargedAuto;
     const basis = totalVol > totalActual ? "volumetric" : "actual";
-    const rate = Number(o.price_per_kg) || custRate(o.customer_id);
+    const rate = Number(o.price_per_kg) || custRate(o.customer_id) || 0;
     const weightPrice = charged * rate;
 
     // Fee breakdown in ORIGINAL currencies (no conversion — that happens at invoice time)
     const isAirM = (m) => m && m !== "Seafreight";
     const feeMode = isAirM(o.shipping_us_sg) && isAirM(o.shipping_sg_id) ? "air_air"
       : isAirM(o.shipping_us_sg) && !isAirM(o.shipping_sg_id) ? "air_sea" : "sea_sea";
-    const autoCBM = pkgs.reduce((a,p)=>a+((+p.l)*(+p.w)*(+p.h))/1000000,0);
-    const cbmA = +o.cbm_us_sg || autoCBM;
-    const cbmB = +o.cbm_sg_id || autoCBM;
+    const autoCBM = pkgs.reduce((a,p)=>a+((+p.l||0)*(+p.w||0)*(+p.h||0))/1000000,0);
+    const cbmA = +o.cbm_us_sg || autoCBM || 0;
+    const cbmB = +o.cbm_sg_id || autoCBM || 0;
     const sf1Total = (+o.fee_1||0) * cbmA;
     const sf2Total = (+o.fee_2||0) * cbmB;
 
