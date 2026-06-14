@@ -29,6 +29,17 @@ export default function Dashboard() {
 
   useEffect(() => { fetchLiveRates().then(setLiveFx); }, []);
 
+  // Ghost zero: auto-select number input content on focus so typing replaces the 0
+  useEffect(() => {
+    const handler = (e) => {
+      if (e.target.type === "number" && (e.target.value === "0" || e.target.value === "0.00" || e.target.value === "")) {
+        e.target.select();
+      }
+    };
+    document.addEventListener("focus", handler, true);
+    return () => document.removeEventListener("focus", handler, true);
+  }, []);
+
   if (D.loading) return <Center>Loading JEI data…</Center>;
   if (D.error) return <Center>Couldn't load data: {D.error}</Center>;
 
@@ -352,108 +363,72 @@ function Pricing({ctx,reload}){
 }
 
 function QuoteCalc({ctx}){
-  const {D,courierOf}=ctx;
-  const [custName,setCustName]=useState("");
-  const [custId,setCustId]=useState("");
-  const [ratePerKg,setRate]=useState(0);
-  const [rateCur,setRateCur]=useState("IDR");
-  const [courier,setCourier]=useState(D.couriers[0]?.id??"");
-  const [pkgs,setPkgs]=useState([{weight:62,l:80,w:60,h:55,unit:"metric"}]);
-
-  function setPkg(i,k,v){const p=[...pkgs];p[i]={...p[i],[k]:v};setPkgs(p);}
-  function addPkg(){setPkgs([...pkgs,{weight:0,l:0,w:0,h:0,unit:"metric"}]);}
-  function removePkg(i){if(pkgs.length>1)setPkgs(pkgs.filter((_,j)=>j!==i));}
-
-  // autocomplete
-  const matches=useMemo(()=>{
-    if(!custName.trim()) return D.customers;
-    return D.customers.filter(c=>c.name.toLowerCase().includes(custName.toLowerCase()));
-  },[custName,D.customers]);
-  const [ddOpen,setDdOpen]=useState(false);
-  const ddRef=useRef(null);
-  useEffect(()=>{
-    const h=(e)=>{if(ddRef.current&&!ddRef.current.contains(e.target))setDdOpen(false);};
-    document.addEventListener("mousedown",h);return()=>document.removeEventListener("mousedown",h);
-  },[]);
-  function pickCust(c){setCustName(c.name);setCustId(c.id);setRate(c.rate_per_kg||0);setRateCur(c.rate_currency||"IDR");setDdOpen(false);}
-
-  const div=courierOf(courier)?.divisor??5000;
-  const details=useMemo(()=>{
-    return pkgs.map(p=>{
-      const u=p.unit||"metric";
-      const wkg=u==="imperial"?+p.weight*LB_TO_KG:+p.weight;
-      const lc={l:u==="imperial"?+p.l*IN_TO_CM:+p.l,w:u==="imperial"?+p.w*IN_TO_CM:+p.w,h:u==="imperial"?+p.h*IN_TO_CM:+p.h};
-      const ch=chargeable(lc,wkg,div);
-      return{...ch,wkg,lc};
-    });
-  },[pkgs,div]);
-  const totalCharged=details.reduce((a,d)=>a+d.charged,0);
-  const totalPrice=totalCharged*(+ratePerKg);
-
-  const fmtPrice=(n)=>rateCur==="USD"?`$${Number(n).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}`:fmtIDR(n);
-
-  function downloadPDF(){
-    const c=courierOf(courier);
-    const metricPkgs=pkgs.map(p=>{const u=p.unit||"metric";return{weight:u==="imperial"?+p.weight*LB_TO_KG:+p.weight,l:u==="imperial"?+p.l*IN_TO_CM:+p.l,w:u==="imperial"?+p.w*IN_TO_CM:+p.w,h:u==="imperial"?+p.h*IN_TO_CM:+p.h};});
-    const doc=generateQuotationPDF({customerName:custName||"Customer",packages:metricPkgs,divisor:div,courierName:c?.name??"",ratePerKg:+ratePerKg,priceCurrency:rateCur});
-    doc.save(`quotation-${custName||"customer"}.pdf`);
-  }
-
+  const {D}=ctx;
+  const US_SG=["Airfreight","FedEx Priority","FedEx Economy","FedEx Freight","Seafreight"];
+  const SG_ID=["Airfreight","Seafreight"];
+  const isAirM=(m)=>m&&m!=="Seafreight";
+  const [custName,setCustName]=useState("");const [custId,setCustId]=useState("");
+  const [shUsSg,setShUsSg]=useState("FedEx Priority");const [shSgId,setShSgId]=useState("Airfreight");
+  const [pkgs,setPkgs]=useState([{weight:0,l:0,w:0,h:0,unit:"metric"}]);
+  const [chargedOvr,setChargedOvr]=useState("");
+  const [pricePerKg,setPricePerKg]=useState(0);const [priceCur,setPriceCur]=useState("USD");
+  const [airSeaOpt,setAirSeaOpt]=useState("weight");
+  const [fee1,setFee1]=useState(0);const [fee1Cur,setFee1Cur]=useState("USD");
+  const [feeClear,setFeeClear]=useState(0);const [feeClearCur,setFeeClearCur]=useState("SGD");
+  const [fee2,setFee2]=useState(0);const [fee2Cur,setFee2Cur]=useState("IDR");
+  const [feeAdd,setFeeAdd]=useState(0);const [feeAddCur,setFeeAddCur]=useState("USD");
+  const [fxUSD,setFxUSD]=useState("");const [fxSGD,setFxSGD]=useState("");
+  const [cbmUsSgOvr,setCbmUsSgOvr]=useState("");const [cbmSgIdOvr,setCbmSgIdOvr]=useState("");
+  function sPkg(i,k,v){const p=[...pkgs];p[i]={...p[i],[k]:v};setPkgs(p);}
+  function addP(){setPkgs([...pkgs,{weight:0,l:0,w:0,h:0,unit:"metric"}]);}
+  function remP(i){if(pkgs.length>1)setPkgs(pkgs.filter((_,j)=>j!==i));}
+  const matches=useMemo(()=>!custName.trim()?D.customers:D.customers.filter(c=>c.name.toLowerCase().includes(custName.toLowerCase())),[custName,D.customers]);
+  const [ddOpen,setDdOpen]=useState(false);const ddRef=useRef(null);
+  useEffect(()=>{const h=e=>{if(ddRef.current&&!ddRef.current.contains(e.target))setDdOpen(false);};document.addEventListener("mousedown",h);return()=>document.removeEventListener("mousedown",h);},[]);
+  function pickC(c){setCustName(c.name);setCustId(c.id);setPricePerKg(c.rate_per_kg||0);setPriceCur(c.rate_currency||"USD");setDdOpen(false);}
+  const div=shUsSg==="Seafreight"||shUsSg==="FedEx Freight"?6000:5000;
+  const mPkgs=pkgs.map(p=>{const u=p.unit||"metric";return{weight:u==="imperial"?+p.weight*LB_TO_KG:+p.weight,l:u==="imperial"?+p.l*IN_TO_CM:+p.l,w:u==="imperial"?+p.w*IN_TO_CM:+p.w,h:u==="imperial"?+p.h*IN_TO_CM:+p.h};});
+  let tRaw=0;mPkgs.forEach(p=>{tRaw+=chargeable({l:p.l,w:p.w,h:p.h},p.weight,div).raw;});
+  const tAuto=Math.ceil(tRaw*2)/2;const tCharged=+chargedOvr||tAuto;
+  const wPrice=tCharged*(+pricePerKg);
+  const aCBM=mPkgs.reduce((a,p)=>a+(p.l*p.w*p.h)/1000000,0);
+  const cA=+cbmUsSgOvr||aCBM;const cB=+cbmSgIdOvr||aCBM;
+  const s1T=(+fee1)*cA;const s2T=(+fee2)*cB;
+  const fM=isAirM(shUsSg)&&isAirM(shSgId)?"air_air":isAirM(shUsSg)&&!isAirM(shSgId)?"air_sea":"sea_sea";
+  const uR=+fxUSD||ctx.liveFx?.usd_idr||15850;const sR=+fxSGD||ctx.liveFx?.sgd_idr||11900;
+  const toI=(a,c)=>c==="USD"?(+a||0)*uR:c==="SGD"?(+a||0)*sR:(+a||0);
+  const fm=(n,c)=>c==="USD"?`$${Number(n||0).toFixed(2)}`:c==="SGD"?`S$${Number(n||0).toFixed(2)}`:fmtIDR(n||0);
+  const gIDR=(()=>{
+    if(fM==="air_air")return toI(wPrice,priceCur)+toI(+feeAdd,feeAddCur);
+    if(fM==="air_sea"&&airSeaOpt==="weight")return toI(wPrice,priceCur)+toI(+feeAdd,feeAddCur);
+    if(fM==="air_sea")return toI(+fee1,fee1Cur)+toI(+feeClear,feeClearCur)+toI(s2T,fee2Cur)+toI(+feeAdd,feeAddCur);
+    return toI(s1T,fee1Cur)+toI(+feeClear,feeClearCur)+toI(s2T,fee2Cur)+toI(+feeAdd,feeAddCur);})();
+  function dlPDF(){const doc=generateQuotationPDF({customerName:custName||"Customer",packages:mPkgs,divisor:div,courierName:shUsSg,ratePerKg:+pricePerKg,priceCurrency:priceCur});doc.save(`quotation-${custName||"customer"}.pdf`);}
+  const CS=({v,onChange})=>(<select style={{...S.input,width:60,padding:"7px 2px",fontSize:12}} value={v} onChange={e=>onChange(e.target.value)}><option value="USD">USD</option><option value="SGD">SGD</option><option value="IDR">IDR</option></select>);
   return(
     <div style={{...S.card,padding:18,marginBottom:18}}>
       <div style={S.calcHead}><Calculator size={16}/><span style={{fontWeight:700}}>Live quote calculator</span></div>
-
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:14}}>
-        <div ref={ddRef} style={{position:"relative"}}>
-          <label style={S.field}><span style={S.fLabel}>Customer</span>
-            <input style={S.input} value={custName} onChange={e=>{setCustName(e.target.value);setCustId("");setDdOpen(true);}}
-              onFocus={()=>setDdOpen(true)} placeholder="Type customer name…" autoComplete="off"/></label>
-          {ddOpen&&<div style={{position:"absolute",top:"100%",left:0,right:0,background:"var(--card)",border:"1px solid var(--line)",borderRadius:10,maxHeight:150,overflowY:"auto",zIndex:10,boxShadow:"0 8px 24px rgba(0,0,0,.12)"}}>
-            {matches.map(c=>(<button key={c.id} style={{display:"flex",justifyContent:"space-between",width:"100%",padding:"9px 12px",border:"none",background:"transparent",cursor:"pointer",fontFamily:"var(--body)",fontSize:13,textAlign:"left",borderBottom:"1px solid var(--line)"}} onClick={()=>pickCust(c)}><span style={{fontWeight:600}}>{c.name}</span><span style={{fontSize:12,color:"var(--ink-3)"}}>{c.rate_per_kg?`${c.rate_currency==="USD"?"$":""}${(c.rate_per_kg).toLocaleString()}/kg`:""}</span></button>))}
-            {matches.length===0&&<div style={{padding:"9px 12px",fontSize:13,color:"var(--ink-3)"}}>No matches</div>}
-          </div>}
-        </div>
-        <label style={S.field}><span style={S.fLabel}>Courier</span>
-          <select value={courier} onChange={e=>setCourier(e.target.value)} style={S.input}>{D.couriers.map(c=><option key={c.id} value={c.id}>{c.name} (÷{c.divisor})</option>)}</select></label>
-        <label style={S.field}><span style={S.fLabel}>Rate per kg</span>
-          <div style={{display:"flex",gap:6}}>
-            <input type="number" value={ratePerKg} onChange={e=>setRate(e.target.value)} style={{...S.input,flex:1}}/>
-            <select value={rateCur} onChange={e=>setRateCur(e.target.value)} style={{...S.input,width:65}}><option value="IDR">IDR</option><option value="USD">USD</option></select>
-          </div></label>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}}>
+        <div ref={ddRef} style={{position:"relative"}}><label style={S.field}><span style={S.fLabel}>Customer</span><input style={S.input} value={custName} onChange={e=>{setCustName(e.target.value);setCustId("");setDdOpen(true);}} onFocus={()=>setDdOpen(true)} placeholder="Type customer name…" autoComplete="off"/></label>
+          {ddOpen&&<div style={{position:"absolute",top:"100%",left:0,right:0,background:"var(--card)",border:"1px solid var(--line)",borderRadius:10,maxHeight:150,overflowY:"auto",zIndex:10,boxShadow:"0 8px 24px rgba(0,0,0,.12)"}}>{matches.map(c=>(<button key={c.id} style={{display:"flex",justifyContent:"space-between",width:"100%",padding:"9px 12px",border:"none",background:"transparent",cursor:"pointer",fontFamily:"var(--body)",fontSize:13,textAlign:"left",borderBottom:"1px solid var(--line)"}} onClick={()=>pickC(c)}><span style={{fontWeight:600}}>{c.name}</span></button>))}{matches.length===0&&<div style={{padding:"9px 12px",fontSize:13,color:"var(--ink-3)"}}>No matches</div>}</div>}</div>
+        <div></div>
       </div>
-      <div style={{fontSize:11,fontWeight:700,color:"var(--ink-3)",letterSpacing:".04em",marginBottom:6,display:"flex",justifyContent:"space-between"}}>
-        <span>PACKAGES ({pkgs.length})</span>
-        <button onClick={addPkg} style={{background:"transparent",border:"none",color:"var(--accent)",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"var(--body)"}}><Plus size={12}/> ADD PACKAGE</button>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}>
+        <label style={S.field}><span style={S.fLabel}>USA → SIN</span><select style={S.input} value={shUsSg} onChange={e=>setShUsSg(e.target.value)}>{US_SG.map(o=><option key={o}>{o}</option>)}</select></label>
+        <label style={S.field}><span style={S.fLabel}>SIN → JKT</span><select style={S.input} value={shSgId} onChange={e=>setShSgId(e.target.value)}>{SG_ID.map(o=><option key={o}>{o}</option>)}</select></label>
       </div>
-      {pkgs.map((p,i)=>{const u=p.unit||"metric";return(
-        <div key={i} style={{display:"flex",alignItems:"center",gap:6,marginBottom:8,background:"var(--head)",border:"1px solid var(--line)",borderRadius:9,padding:"8px 10px"}}>
-          <span style={{fontSize:12,color:"var(--ink-3)",fontWeight:700,width:20}}>{i+1}</span>
-          <input type="number" value={p.weight} onChange={e=>setPkg(i,"weight",e.target.value)} style={{...S.input,width:70,textAlign:"center"}} placeholder="0"/>
-          <select value={u} onChange={e=>{setPkg(i,"unit",e.target.value);}} style={{...S.input,width:45,padding:"7px 2px",fontSize:12}}><option value="metric">kg</option><option value="imperial">lb</option></select>
-          <input type="number" value={p.l} onChange={e=>setPkg(i,"l",e.target.value)} style={{...S.input,width:55,textAlign:"center"}} placeholder="L"/>
-          <span style={{color:"var(--ink-3)"}}>×</span>
-          <input type="number" value={p.w} onChange={e=>setPkg(i,"w",e.target.value)} style={{...S.input,width:55,textAlign:"center"}} placeholder="W"/>
-          <span style={{color:"var(--ink-3)"}}>×</span>
-          <input type="number" value={p.h} onChange={e=>setPkg(i,"h",e.target.value)} style={{...S.input,width:55,textAlign:"center"}} placeholder="H"/>
-          <select value={u} onChange={e=>setPkg(i,"unit",e.target.value)} style={{...S.input,width:45,padding:"7px 2px",fontSize:12}}><option value="metric">cm</option><option value="imperial">in</option></select>
-          {pkgs.length>1&&<button onClick={()=>removePkg(i)} style={{background:"transparent",border:"none",color:"var(--bad)",cursor:"pointer"}}><Trash2 size={14}/></button>}
-        </div>
-      );})}
-
-      <div style={S.resultRow}>
-        <ResCell label="Total actual" value={`${details.reduce((a,d)=>a+d.wkg,0).toFixed(1)} kg`}/>
-        <ResCell label="Total volumetric" value={`${details.reduce((a,d)=>a+d.vol,0).toFixed(1)} kg`} note={`÷${div}`}/>
-        <ResCell label="Charged" value={`${totalCharged.toFixed(1)} kg`} highlight/>
-        <ResCell label="Rate" value={`${fmtPrice(+ratePerKg)}/kg`}/>
-        <ResCell label="Quoted price" value={fmtPrice(totalPrice)} big/>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}><span style={{fontSize:11,fontWeight:700,color:"var(--ink-3)",letterSpacing:".04em"}}>PACKAGES ({pkgs.length})</span><button onClick={addP} style={{display:"flex",alignItems:"center",gap:5,background:"var(--accent)",color:"#fff",border:"none",borderRadius:8,padding:"7px 12px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"var(--body)"}}><Plus size={13}/> Add package</button></div>
+      {pkgs.map((p,i)=>{const u=p.unit||"metric";const mp=mPkgs[i];const ch=chargeable({l:mp.l,w:mp.w,h:mp.h},mp.weight,div);return(<div key={i}><div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4,background:"var(--head)",border:"1px solid var(--line)",borderRadius:9,padding:"8px 10px"}}><span style={{fontSize:12,color:"var(--ink-3)",fontWeight:700,width:20}}>{i+1}</span><input type="number" value={p.weight} onChange={e=>sPkg(i,"weight",e.target.value)} style={{...S.input,width:65,textAlign:"center"}} placeholder="0"/><select value={u} onChange={e=>sPkg(i,"unit",e.target.value)} style={{...S.input,width:42,padding:"7px 2px",fontSize:12}}><option value="metric">kg</option><option value="imperial">lb</option></select><input type="number" value={p.l} onChange={e=>sPkg(i,"l",e.target.value)} style={{...S.input,width:50,textAlign:"center"}} placeholder="L"/><span style={{color:"var(--ink-3)"}}>×</span><input type="number" value={p.w} onChange={e=>sPkg(i,"w",e.target.value)} style={{...S.input,width:50,textAlign:"center"}} placeholder="W"/><span style={{color:"var(--ink-3)"}}>×</span><input type="number" value={p.h} onChange={e=>sPkg(i,"h",e.target.value)} style={{...S.input,width:50,textAlign:"center"}} placeholder="H"/><select value={u} onChange={e=>sPkg(i,"unit",e.target.value)} style={{...S.input,width:42,padding:"7px 2px",fontSize:12}}><option value="metric">cm</option><option value="imperial">in</option></select>{pkgs.length>1&&<button onClick={()=>remP(i)} style={{background:"transparent",border:"none",color:"var(--bad)",cursor:"pointer"}}><Trash2 size={14}/></button>}</div><div style={{padding:"2px 10px 8px 30px",fontSize:12,display:"flex",gap:8,flexWrap:"wrap"}}><span style={ch.basis==="actual"?{fontWeight:700,color:"var(--accent)",background:"var(--good-bg)",padding:"1px 6px",borderRadius:5}:{color:"var(--ink-3)"}}>Act: {mp.weight.toFixed(2)}kg</span><span style={{color:"var(--ink-3)",fontStyle:"italic"}}>vs</span><span style={ch.basis==="volumetric"?{fontWeight:700,color:"var(--accent)",background:"var(--good-bg)",padding:"1px 6px",borderRadius:5}:{color:"var(--ink-3)"}}>Vol: {ch.vol.toFixed(2)}kg</span><span style={{color:"var(--ink-3)"}}>→</span><span style={{fontWeight:700}}>{ch.raw.toFixed(2)}kg</span></div></div>);})}
+      <div style={{background:"var(--head)",border:"1px solid var(--line)",borderRadius:10,padding:"10px 14px",marginBottom:14}}><div style={{display:"flex",justifyContent:"space-between",gap:12,fontSize:13,flexWrap:"wrap",marginBottom:6}}><span>Auto: <b>{tAuto.toFixed(1)} kg</b></span><div style={{display:"flex",alignItems:"center",gap:6}}><span style={{fontSize:12,color:"var(--ink-3)"}}>Override:</span><input type="number" value={chargedOvr} onChange={e=>setChargedOvr(e.target.value)} placeholder={tAuto.toFixed(1)} style={{...S.input,width:75,textAlign:"center",padding:"4px 6px",fontSize:13,fontWeight:700,...(chargedOvr?{borderColor:"var(--accent)"}:{})}}/></div><span style={{fontWeight:700,color:"var(--accent)",fontSize:14}}>Final: {tCharged.toFixed(1)} kg</span></div><span style={{fontSize:11,color:"var(--ink-3)"}}>{pkgs.length} pkg · ÷{div}</span></div>
+      <div style={{background:"var(--head)",border:"1px solid var(--line)",borderRadius:12,padding:16,marginBottom:12}}>
+        <div style={{fontSize:12,fontWeight:700,color:"var(--ink-3)",letterSpacing:".04em",marginBottom:10,textTransform:"uppercase"}}>Pricing — {fM==="air_air"?"Air + Air":fM==="air_sea"?"Air + Sea":"Sea + Sea"}</div>
+        {fM==="air_air"&&(<><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}><label style={S.field}><span style={S.fLabel}>Rate per kg</span><div style={{display:"flex",gap:4}}><input style={{...S.input,flex:1}} type="number" value={pricePerKg} onChange={e=>setPricePerKg(e.target.value)}/><CS v={priceCur} onChange={setPriceCur}/></div></label><label style={S.field}><span style={S.fLabel}>Additional cost</span><div style={{display:"flex",gap:4}}><input style={{...S.input,flex:1}} type="number" value={feeAdd} onChange={e=>setFeeAdd(e.target.value)} placeholder="0"/><CS v={feeAddCur} onChange={setFeeAddCur}/></div></label></div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginTop:8}}><label style={S.field}><span style={S.fLabel}>USD→IDR</span><input style={S.input} type="number" value={fxUSD} onChange={e=>setFxUSD(e.target.value)} placeholder={ctx.liveFx?.usd_idr||15850}/></label><label style={S.field}><span style={S.fLabel}>SGD→IDR</span><input style={S.input} type="number" value={fxSGD} onChange={e=>setFxSGD(e.target.value)} placeholder={ctx.liveFx?.sgd_idr||11900}/></label></div><div style={{background:"var(--good-bg)",borderRadius:9,padding:"10px 14px",marginTop:8}}><span style={{fontWeight:700,fontSize:14}}>Total (IDR): {fmtIDR(gIDR)}</span></div></>)}
+        {fM==="air_sea"&&(<><label style={S.field}><span style={S.fLabel}>Pricing method</span><select style={S.input} value={airSeaOpt} onChange={e=>setAirSeaOpt(e.target.value)}><option value="weight">Price per weight + Additional</option><option value="breakdown">Airfreight + Clearance + Seafreight/CBM + Additional</option></select></label>{airSeaOpt==="weight"?(<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}><label style={S.field}><span style={S.fLabel}>Rate per kg</span><div style={{display:"flex",gap:4}}><input style={{...S.input,flex:1}} type="number" value={pricePerKg} onChange={e=>setPricePerKg(e.target.value)}/><CS v={priceCur} onChange={setPriceCur}/></div></label><label style={S.field}><span style={S.fLabel}>Additional cost</span><div style={{display:"flex",gap:4}}><input style={{...S.input,flex:1}} type="number" value={feeAdd} onChange={e=>setFeeAdd(e.target.value)} placeholder="0"/><CS v={feeAddCur} onChange={setFeeAddCur}/></div></label></div>):(<><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}><label style={S.field}><span style={S.fLabel}>Airfreight fee</span><div style={{display:"flex",gap:4}}><input style={{...S.input,flex:1}} type="number" value={fee1} onChange={e=>setFee1(e.target.value)}/><CS v={fee1Cur} onChange={setFee1Cur}/></div></label><label style={S.field}><span style={S.fLabel}>Clearance fee</span><div style={{display:"flex",gap:4}}><input style={{...S.input,flex:1}} type="number" value={feeClear} onChange={e=>setFeeClear(e.target.value)}/><CS v={feeClearCur} onChange={setFeeClearCur}/></div></label></div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}><label style={S.field}><span style={S.fLabel}>SF rate/CBM (SIN→JKT)</span><div style={{display:"flex",gap:4}}><input style={{...S.input,flex:1}} type="number" value={fee2} onChange={e=>setFee2(e.target.value)}/><CS v={fee2Cur} onChange={setFee2Cur}/></div></label><label style={S.field}><span style={S.fLabel}>Additional cost</span><div style={{display:"flex",gap:4}}><input style={{...S.input,flex:1}} type="number" value={feeAdd} onChange={e=>setFeeAdd(e.target.value)}/><CS v={feeAddCur} onChange={setFeeAddCur}/></div></label></div><label style={S.field}><span style={S.fLabel}>{`CBM SIN→JKT (auto: ${aCBM.toFixed(3)})`}</span><input style={{...S.input,maxWidth:200}} type="number" value={cbmSgIdOvr} onChange={e=>setCbmSgIdOvr(e.target.value)} placeholder={aCBM.toFixed(3)}/></label></>)}<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginTop:8}}><label style={S.field}><span style={S.fLabel}>USD→IDR</span><input style={S.input} type="number" value={fxUSD} onChange={e=>setFxUSD(e.target.value)} placeholder={ctx.liveFx?.usd_idr||15850}/></label><label style={S.field}><span style={S.fLabel}>SGD→IDR</span><input style={S.input} type="number" value={fxSGD} onChange={e=>setFxSGD(e.target.value)} placeholder={ctx.liveFx?.sgd_idr||11900}/></label></div><div style={{background:"var(--good-bg)",borderRadius:9,padding:"10px 14px",marginTop:6}}><span style={{fontWeight:700,fontSize:14}}>Total (IDR): {fmtIDR(gIDR)}</span></div></>)}
+        {fM==="sea_sea"&&(<><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}><label style={S.field}><span style={S.fLabel}>SF1 rate/CBM (USA→SIN)</span><div style={{display:"flex",gap:4}}><input style={{...S.input,flex:1}} type="number" value={fee1} onChange={e=>setFee1(e.target.value)}/><CS v={fee1Cur} onChange={setFee1Cur}/></div></label><label style={S.field}><span style={S.fLabel}>Clearance fee</span><div style={{display:"flex",gap:4}}><input style={{...S.input,flex:1}} type="number" value={feeClear} onChange={e=>setFeeClear(e.target.value)}/><CS v={feeClearCur} onChange={setFeeClearCur}/></div></label></div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}><label style={S.field}><span style={S.fLabel}>SF2 rate/CBM (SIN→JKT)</span><div style={{display:"flex",gap:4}}><input style={{...S.input,flex:1}} type="number" value={fee2} onChange={e=>setFee2(e.target.value)}/><CS v={fee2Cur} onChange={setFee2Cur}/></div></label><label style={S.field}><span style={S.fLabel}>Additional cost</span><div style={{display:"flex",gap:4}}><input style={{...S.input,flex:1}} type="number" value={feeAdd} onChange={e=>setFeeAdd(e.target.value)}/><CS v={feeAddCur} onChange={setFeeAddCur}/></div></label></div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}><label style={S.field}><span style={S.fLabel}>USD→IDR</span><input style={S.input} type="number" value={fxUSD} onChange={e=>setFxUSD(e.target.value)} placeholder={ctx.liveFx?.usd_idr||15850}/></label><label style={S.field}><span style={S.fLabel}>SGD→IDR</span><input style={S.input} type="number" value={fxSGD} onChange={e=>setFxSGD(e.target.value)} placeholder={ctx.liveFx?.sgd_idr||11900}/></label></div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}><label style={S.field}><span style={S.fLabel}>{`CBM USA→SIN (auto: ${aCBM.toFixed(3)})`}</span><input style={S.input} type="number" value={cbmUsSgOvr} onChange={e=>setCbmUsSgOvr(e.target.value)} placeholder={aCBM.toFixed(3)}/></label><label style={S.field}><span style={S.fLabel}>{`CBM SIN→JKT (auto: ${aCBM.toFixed(3)})`}</span><input style={S.input} type="number" value={cbmSgIdOvr} onChange={e=>setCbmSgIdOvr(e.target.value)} placeholder={aCBM.toFixed(3)}/></label></div><div style={{display:"flex",flexWrap:"wrap",gap:"6px 14px",background:"var(--card)",border:"1px solid var(--line)",borderRadius:9,padding:"10px 14px",fontSize:12.5,marginTop:6}}><span>SF1:{fm(+fee1,fee1Cur)}/CBM×{cA.toFixed(2)}={fm(s1T,fee1Cur)}</span><span>Clear:{fm(+feeClear,feeClearCur)}</span><span>SF2:{fm(+fee2,fee2Cur)}/CBM×{cB.toFixed(2)}={fm(s2T,fee2Cur)}</span><span>Add:{fm(+feeAdd,feeAddCur)}</span></div><div style={{background:"var(--good-bg)",borderRadius:9,padding:"10px 14px",marginTop:4}}><span style={{fontWeight:700,fontSize:14}}>Total (IDR): {fmtIDR(gIDR)}</span></div></>)}
       </div>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:10}}>
-        <p style={S.calcFoot}>Charged = max(actual, volumetric) per package, min 3 kg each. {pkgs.length} package{pkgs.length>1?"s":""}.</p>
-        <button style={S.printBtn} onClick={downloadPDF}><Download size={13}/> Download PDF</button>
-      </div>
+      <div style={{display:"flex",justifyContent:"flex-end"}}><button style={S.printBtn} onClick={dlPDF}><Download size={13}/> Download PDF</button></div>
     </div>);
 }
-
 function RateCards({ctx,reload}){
   const {D}=ctx;
   const [draft,setDraft]=useState(()=>Object.fromEntries(D.customers.map(c=>[c.id,c.rate_per_kg])));

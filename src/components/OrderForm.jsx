@@ -47,6 +47,7 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
     air_sea_option: "weight",
     cbm_us_sg: "",
     cbm_sg_id: "",
+    charged_override: "",
     // Step 4: Additional notes
     aes_required: order?.aes_required ?? false,
     aes_details: order?.aes_details ?? "",
@@ -90,7 +91,9 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
   // Sum RAW chargeable (unrounded) across all packages, then round total once
   let totalRaw = 0;
   metricPkgs.forEach(p => { totalRaw += chargeable({ l: p.l, w: p.w, h: p.h }, p.weight, div).raw; });
-  const totalCharged = Math.ceil(totalRaw * 2) / 2; // round total to nearest 0.5
+  const totalChargedAuto = Math.ceil(totalRaw * 2) / 2;
+  // User can override the final charged kg (e.g. for discounted pricing)
+  const totalCharged = +f.charged_override || totalChargedAuto;
 
   // Fee mode based on shipping combo
   const feeMode = isAir(f.shipping_us_sg) && isAir(f.shipping_sg_id) ? "air_air"
@@ -335,10 +338,16 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
                 <span>Total vol: <b>{metricPkgs.reduce((a, p) => a + chargeable({ l: p.l, w: p.w, h: p.h }, p.weight, div).vol, 0).toFixed(2)} kg</b></span>
               </div>
               <div style={S.pkgTotalRow}>
-                <span>Sum: <b>{totalRaw.toFixed(2)} kg</b></span>
+                <span>Auto charged: <b>{totalChargedAuto.toFixed(1)} kg</b></span>
+                <div style={{display:"flex",alignItems:"center",gap:6}}>
+                  <span style={{fontSize:12,color:"var(--ink-3)"}}>Override kg:</span>
+                  <input type="number" value={f.charged_override} onChange={set("charged_override")}
+                    placeholder={totalChargedAuto.toFixed(1)} style={{...S.input,width:80,textAlign:"center",padding:"5px 6px",fontSize:13,fontWeight:700,
+                    ...(f.charged_override ? {borderColor:"var(--accent)",color:"var(--accent)"} : {})}} />
+                </div>
                 <span style={{ fontWeight: 700, color: "var(--accent)", fontSize: 14 }}>
-                  Charged: {totalCharged.toFixed(1)} kg
-                  {totalCharged > totalRaw ? ` (↑${(totalCharged - totalRaw).toFixed(2)})` : ""}
+                  Final: {totalCharged.toFixed(1)} kg
+                  {f.charged_override && totalCharged < totalChargedAuto ? ` (↓${(totalChargedAuto - totalCharged).toFixed(1)} discount)` : ""}
                 </span>
               </div>
               <span style={{ fontSize: 11.5, color: "var(--ink-3)" }}>{f.packages.length} pkg · ÷{div} · rounded ↑ 0.5 kg</span>
