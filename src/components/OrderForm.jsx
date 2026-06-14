@@ -42,12 +42,11 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
     fee_clearance_cur: "USD",
     fee_2_cur: "IDR",
     fee_additional_cur: "USD",
-    manual_fx_rate: "",
-    manual_sgd_rate: "",
     air_sea_option: "weight",
     cbm_us_sg: "",
     cbm_sg_id: "",
-    charged_override: "",
+    charged_override: order?.charged_override ?? "",
+    divisor: order?.divisor ?? "",
     // Step 4: Additional notes
     aes_required: order?.aes_required ?? false,
     aes_details: order?.aes_details ?? "",
@@ -79,15 +78,8 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
     return { weight: u === "imperial" ? +p.weight * LB_TO_KG : +p.weight, l: u === "imperial" ? +p.l * IN_TO_CM : +p.l, w: u === "imperial" ? +p.w * IN_TO_CM : +p.w, h: u === "imperial" ? +p.h * IN_TO_CM : +p.h };
   });
 
-  // Get courier divisor based on shipping method
-  const getDivisor = () => {
-    const method = f.shipping_us_sg;
-    if (method === "Seafreight") return 6000;
-    if (method === "FedEx Freight") return 6000;
-    return 5000; // FedEx Priority/Economy/Airfreight
-  };
-
-  const div = getDivisor();
+  // Divisor is now user-selected, not auto-derived
+  const div = +f.divisor || 5000;
   // Sum RAW chargeable (unrounded) across all packages, then round total once
   let totalRaw = 0;
   metricPkgs.forEach(p => { totalRaw += chargeable({ l: p.l, w: p.w, h: p.h }, p.weight, div).raw; });
@@ -113,25 +105,8 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
   const fmtPrice = (n) => f.price_currency === "USD" ? `$${Number(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : f.price_currency === "SGD" ? `S$${Number(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : fmtIDR(n);
   const fmtFee = (n, cur) => cur === "USD" ? `$${Number(n||0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : cur === "SGD" ? `S$${Number(n||0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : fmtIDR(n||0);
 
-  // Convert any fee to IDR using manual rates
-  const fxUSD = +f.manual_fx_rate || ctx.liveFx?.usd_idr || 15850;
-  const fxSGD = +f.manual_sgd_rate || ctx.liveFx?.sgd_idr || 11900;
-  const toIDRFee = (amt, cur) => cur === "USD" ? (+amt || 0) * fxUSD : cur === "SGD" ? (+amt || 0) * fxSGD : (+amt || 0);
-
-  // Grand total always in IDR (all fees converted)
-  const grandTotalIDR = (() => {
-    if (feeMode === "air_air") {
-      return toIDRFee(weightPrice, f.price_currency) + toIDRFee(+f.fee_additional, f.fee_additional_cur);
-    } else if (feeMode === "air_sea" && f.air_sea_option === "weight") {
-      return toIDRFee(weightPrice, f.price_currency) + toIDRFee(+f.fee_additional, f.fee_additional_cur);
-    } else if (feeMode === "air_sea") {
-      // breakdown: airfreight (flat) + clearance (flat) + seafreight (rate×CBM) + additional
-      return toIDRFee(+f.fee_1, f.fee_1_cur) + toIDRFee(+f.fee_clearance, f.fee_clearance_cur) + toIDRFee(sf2Total, f.fee_2_cur) + toIDRFee(+f.fee_additional, f.fee_additional_cur);
-    } else {
-      // sea+sea: both seafreight are rate×CBM
-      return toIDRFee(sf1Total, f.fee_1_cur) + toIDRFee(+f.fee_clearance, f.fee_clearance_cur) + toIDRFee(sf2Total, f.fee_2_cur) + toIDRFee(+f.fee_additional, f.fee_additional_cur);
-    }
-  })();
+  // No conversion at order time — fees stay in their entered currencies.
+  // Conversion happens later in the Invoice tab using per-invoice manual rates.
 
   async function save() {
     setErr(""); setBusy(true);
@@ -156,7 +131,9 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
         if (error) throw error;
       }
 
-      const sellIdr = Math.round(grandTotalIDR);
+      // sell_idr is no longer computed here — conversion happens in the Invoice tab.
+      // Store 0 for now; the invoice will calculate and persist the final IDR total.
+      const sellIdr = order?.sell_idr || 0;
 
       const payload = {
         customer_id: customerId, shipment_id: shipmentId,
@@ -165,11 +142,14 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
         dim_l_cm: metricPkgs[0]?.l || 0, dim_w_cm: metricPkgs[0]?.w || 0, dim_h_cm: metricPkgs[0]?.h || 0,
         packages: metricPkgs, sell_idr: sellIdr, sell_currency: f.price_currency,
         price_per_kg: +f.price_per_kg, price_currency: f.price_currency,
-        order_date: f.order_date,
+        order_date: f.order_date, divisor: +f.divisor || 5000,
+        charged_override: f.charged_override ? +f.charged_override : null,
         customer_type: f.customer_type, supplier_name: f.supplier_name,
         country_origin: f.country_origin, destination: f.destination,
         shipping_us_sg: f.shipping_us_sg, shipping_sg_id: f.shipping_sg_id,
         fee_1: +f.fee_1, fee_clearance: +f.fee_clearance, fee_2: +f.fee_2, fee_additional: +f.fee_additional,
+        fee_1_cur: f.fee_1_cur, fee_clearance_cur: f.fee_clearance_cur, fee_2_cur: f.fee_2_cur, fee_additional_cur: f.fee_additional_cur,
+        air_sea_option: f.air_sea_option, cbm_us_sg: f.cbm_us_sg ? +f.cbm_us_sg : null, cbm_sg_id: f.cbm_sg_id ? +f.cbm_sg_id : null,
         aes_required: f.aes_required, aes_details: f.aes_details,
         pickup_required: f.pickup_required, pickup_details: f.pickup_details,
         additional_info: f.additional_info,
@@ -281,6 +261,15 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
           {step === 3 && (<>
             <Field label="Product description"><input style={S.input} value={f.product} onChange={set("product")} placeholder="e.g. Hydraulic pump parts" /></Field>
 
+            <Field label="Volumetric divisor *">
+              <select style={{...S.input, ...(!f.divisor ? {borderColor:"var(--bad)"} : {})}} value={f.divisor} onChange={set("divisor")}>
+                <option value="">Select divisor…</option>
+                <option value="5000">÷ 5000 (Air standard)</option>
+                <option value="6000">÷ 6000 (Sea / Freight)</option>
+              </select>
+              {!f.divisor && <div style={{fontSize:11.5,color:"var(--bad)",marginTop:3}}>Required — pick a divisor before continuing</div>}
+            </Field>
+
             {/* Packages — ADD PACKAGE button prominent at top */}
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
               <div style={S.pkgColLabel}>PACKAGES ({f.packages.length})</div>
@@ -336,15 +325,15 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
               <div style={S.pkgTotalRow}>
                 <span>Total actual: <b>{metricPkgs.reduce((a, p) => a + p.weight, 0).toFixed(2)} kg</b></span>
                 <span>Total vol: <b>{metricPkgs.reduce((a, p) => a + chargeable({ l: p.l, w: p.w, h: p.h }, p.weight, div).vol, 0).toFixed(2)} kg</b></span>
-              </div>
-              <div style={S.pkgTotalRow}>
                 <span>Auto charged: <b>{totalChargedAuto.toFixed(1)} kg</b></span>
-                <div style={{display:"flex",alignItems:"center",gap:6}}>
-                  <span style={{fontSize:12,color:"var(--ink-3)"}}>Override kg:</span>
+              </div>
+              <div style={{...S.pkgTotalRow, alignItems:"center", borderTop:"1px solid var(--line)", paddingTop:8, marginTop:2}}>
+                <label style={{display:"flex",alignItems:"center",gap:8,flex:1}}>
+                  <span style={{fontSize:12.5,fontWeight:600,color:"var(--ink-2)"}}>Override charged weight (kg)</span>
                   <input type="number" value={f.charged_override} onChange={set("charged_override")}
-                    placeholder={totalChargedAuto.toFixed(1)} style={{...S.input,width:80,textAlign:"center",padding:"5px 6px",fontSize:13,fontWeight:700,
+                    placeholder={totalChargedAuto.toFixed(1)} style={{...S.input,width:90,textAlign:"center",padding:"6px 8px",fontSize:13,fontWeight:700,
                     ...(f.charged_override ? {borderColor:"var(--accent)",color:"var(--accent)"} : {})}} />
-                </div>
+                </label>
                 <span style={{ fontWeight: 700, color: "var(--accent)", fontSize: 14 }}>
                   Final: {totalCharged.toFixed(1)} kg
                   {f.charged_override && totalCharged < totalChargedAuto ? ` (↓${(totalChargedAuto - totalCharged).toFixed(1)} discount)` : ""}
@@ -381,18 +370,9 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
                     </div>
                   </Field>
                 </div>
-                <div style={S.row2}>
-                  <Field label="USD → IDR rate">
-                    <input style={S.input} type="number" value={f.manual_fx_rate} onChange={set("manual_fx_rate")} placeholder={`e.g. ${ctx.liveFx?.usd_idr || 15850}`}/>
-                  </Field>
-                  <Field label="SGD → IDR rate">
-                    <input style={S.input} type="number" value={f.manual_sgd_rate} onChange={set("manual_sgd_rate")} placeholder={`e.g. ${ctx.liveFx?.sgd_idr || 11900}`}/>
-                  </Field>
-                </div>
                 <div style={S.totalBar}>
                   <span>Weight: {fmtFee(weightPrice, f.price_currency)}</span>
                   <span>+ Additional: {fmtFee(+f.fee_additional||0, f.fee_additional_cur)}</span>
-                  <span style={{ fontWeight: 700 }}>Total (IDR): {fmtIDR(grandTotalIDR)}</span>
                 </div>
               </>)}
 
@@ -424,18 +404,9 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
                       </div>
                     </Field>
                   </div>
-                  <div style={S.row2}>
-                    <Field label="USD → IDR rate">
-                      <input style={S.input} type="number" value={f.manual_fx_rate} onChange={set("manual_fx_rate")} placeholder={`e.g. ${ctx.liveFx?.usd_idr || 15850}`}/>
-                    </Field>
-                    <Field label="SGD → IDR rate">
-                      <input style={S.input} type="number" value={f.manual_sgd_rate} onChange={set("manual_sgd_rate")} placeholder={`e.g. ${ctx.liveFx?.sgd_idr || 11900}`}/>
-                    </Field>
-                  </div>
                   <div style={S.totalBar}>
                     <span>Weight: {fmtFee(weightPrice, f.price_currency)}</span>
                     <span>+ Additional: {fmtFee(+f.fee_additional||0, f.fee_additional_cur)}</span>
-                    <span style={{ fontWeight: 700 }}>Total (IDR): {fmtIDR(grandTotalIDR)}</span>
                   </div>
                 </>) : (<>
                   <div style={S.row2}>
@@ -469,22 +440,11 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
                   <Field label={`CBM SIN→JKT (auto: ${autoCBM.toFixed(3)})`}>
                     <input style={{...S.input,maxWidth:200}} type="number" value={f.cbm_sg_id} onChange={set("cbm_sg_id")} placeholder={autoCBM.toFixed(3)}/>
                   </Field>
-                  <div style={S.row2}>
-                    <Field label="USD → IDR rate">
-                      <input style={S.input} type="number" value={f.manual_fx_rate} onChange={set("manual_fx_rate")} placeholder={`e.g. ${ctx.liveFx?.usd_idr || 15850}`}/>
-                    </Field>
-                    <Field label="SGD → IDR rate">
-                      <input style={S.input} type="number" value={f.manual_sgd_rate} onChange={set("manual_sgd_rate")} placeholder={`e.g. ${ctx.liveFx?.sgd_idr || 11900}`}/>
-                    </Field>
-                  </div>
                   <div style={S.totalBar}>
                     <span>Air: {fmtFee(+f.fee_1,f.fee_1_cur)}</span>
                     <span>+ Clear: {fmtFee(+f.fee_clearance,f.fee_clearance_cur)}</span>
                     <span>+ Sea: {fmtFee(+f.fee_2,f.fee_2_cur)}/CBM × {cbmSgId.toFixed(2)} = {fmtFee(sf2Total,f.fee_2_cur)}</span>
                     <span>+ Add: {fmtFee(+f.fee_additional,f.fee_additional_cur)}</span>
-                  </div>
-                  <div style={{...S.totalBar,marginTop:4,background:"var(--good-bg)"}}>
-                    <span style={{fontWeight:700,fontSize:14}}>Total (IDR): {fmtIDR(grandTotalIDR)}</span>
                   </div>
                 </>)}
               </>)}
@@ -520,14 +480,6 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
                   </Field>
                 </div>
                 <div style={S.row2}>
-                  <Field label="USD → IDR rate">
-                    <input style={S.input} type="number" value={f.manual_fx_rate} onChange={set("manual_fx_rate")} placeholder={`e.g. ${ctx.liveFx?.usd_idr || 15850}`}/>
-                  </Field>
-                  <Field label="SGD → IDR rate">
-                    <input style={S.input} type="number" value={f.manual_sgd_rate} onChange={set("manual_sgd_rate")} placeholder={`e.g. ${ctx.liveFx?.sgd_idr || 11900}`}/>
-                  </Field>
-                </div>
-                <div style={S.row2}>
                   <Field label={`CBM USA→SIN (auto: ${autoCBM.toFixed(3)})`}>
                     <input style={S.input} type="number" value={f.cbm_us_sg} onChange={set("cbm_us_sg")} placeholder={autoCBM.toFixed(3)}/>
                   </Field>
@@ -540,9 +492,6 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
                   <span>+ Clear: {fmtFee(+f.fee_clearance,f.fee_clearance_cur)}</span>
                   <span>+ SF2: {fmtFee(+f.fee_2,f.fee_2_cur)}/CBM × {cbmSgId.toFixed(2)} = {fmtFee(sf2Total,f.fee_2_cur)}</span>
                   <span>+ Add: {fmtFee(+f.fee_additional,f.fee_additional_cur)}</span>
-                </div>
-                <div style={{...S.totalBar,marginTop:4,background:"var(--good-bg)"}}>
-                  <span style={{fontWeight:700,fontSize:14}}>Total (IDR): {fmtIDR(grandTotalIDR)}</span>
                 </div>
               </>)}
             </div>
@@ -594,6 +543,7 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
             {step > 1 && <button style={S.backBtn} onClick={() => setStep(step - 1)}><ArrowLeft size={14} /> Back</button>}
             {step < 4 && <button style={S.nextBtn} onClick={() => {
               if (step === 1 && !f.customer_name.trim()) { setErr("Customer name is required."); return; }
+              if (step === 3 && !f.divisor) { setErr("Please select a volumetric divisor before continuing."); return; }
               setErr(""); setStep(step + 1);
             }}>Next <ArrowRight size={14} /></button>}
             {step === 4 && <button style={S.saveBtn} onClick={save} disabled={busy}>{busy ? "Saving…" : editing ? "Save changes" : "Create order"}</button>}

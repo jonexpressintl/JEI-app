@@ -1,7 +1,7 @@
 import { useState, useMemo, useRef, useEffect } from "react";
 import { Package, Ship, Truck, Eye, EyeOff, Search, ChevronRight, AlertCircle, CheckCircle2, FileText, Calculator, Tag, LayoutGrid, Plus, Printer, LogOut, RefreshCw, Pencil, Boxes, Circle, CreditCard, ExternalLink, Copy, Check, Download, Upload, Users, DollarSign, TrendingUp } from "lucide-react";
 import { useAuth } from "../lib/auth";
-import { useJEIData, updateCustomerRate, addCustomer, setShipmentStage, setShipmentPayment, setShipmentTracking, completeOrder } from "../lib/data";
+import { useJEIData, updateCustomerRate, addCustomer, setShipmentStage, setShipmentPayment, setShipmentTracking, completeOrder, updateOrder } from "../lib/data";
 import { chargeable, fmtIDR, fmtShort, toIDR, trackingUrl, MIN_KG, IN_TO_CM, LB_TO_KG } from "../lib/pricing";
 import { generateInvoicePDF, generateQuotationPDF } from "../lib/pdf";
 import { fetchLiveRates } from "../lib/fx";
@@ -51,8 +51,7 @@ export default function Dashboard() {
   const costsFor = (sid) => D.costs.filter(c=>c.shipment_id===sid);
 
   const quote = (o) => {
-    const s = shipmentOf(o.shipment_id);
-    const div = courierOf(s?.courier_id)?.divisor ?? 5000;
+    const div = +o.divisor || 5000;
     // Use packages array if available, otherwise fall back to single weight/dims
     const pkgs = o.packages && o.packages.length > 0
       ? o.packages
@@ -62,10 +61,42 @@ export default function Dashboard() {
       const ch = chargeable({ l: +p.l, w: +p.w, h: +p.h }, +p.weight, div);
       totalRaw += ch.raw; totalVol += ch.vol; totalActual += +p.weight;
     });
-    const charged = Math.ceil(totalRaw * 2) / 2; // round total to 0.5
+    const chargedAuto = Math.ceil(totalRaw * 2) / 2; // round total to 0.5
+    const charged = +o.charged_override || chargedAuto;
     const basis = totalVol > totalActual ? "volumetric" : "actual";
     const rate = Number(o.price_per_kg) || custRate(o.customer_id);
-    return { vol: totalVol, charged, basis, minApplied: totalRaw <= 3, rate, price: charged * rate, divisor: div, pkgCount: pkgs.length };
+    const weightPrice = charged * rate;
+
+    // Fee breakdown in ORIGINAL currencies (no conversion — that happens at invoice time)
+    const isAirM = (m) => m && m !== "Seafreight";
+    const feeMode = isAirM(o.shipping_us_sg) && isAirM(o.shipping_sg_id) ? "air_air"
+      : isAirM(o.shipping_us_sg) && !isAirM(o.shipping_sg_id) ? "air_sea" : "sea_sea";
+    const autoCBM = pkgs.reduce((a,p)=>a+((+p.l)*(+p.w)*(+p.h))/1000000,0);
+    const cbmA = +o.cbm_us_sg || autoCBM;
+    const cbmB = +o.cbm_sg_id || autoCBM;
+    const sf1Total = (+o.fee_1||0) * cbmA;
+    const sf2Total = (+o.fee_2||0) * cbmB;
+
+    // Build a list of fee line items {label, amount, currency}
+    let feeLines = [];
+    if (feeMode === "air_air" || (feeMode === "air_sea" && o.air_sea_option !== "breakdown")) {
+      feeLines.push({ label: `${o.product||"Shipment"} (${charged.toFixed(1)} kg × ${o.price_currency==="USD"?"$":o.price_currency==="SGD"?"S$":"Rp"}${rate.toLocaleString()})`, amount: weightPrice, currency: o.price_currency || "USD" });
+      if (+o.fee_additional) feeLines.push({ label: "Additional cost", amount: +o.fee_additional, currency: o.fee_additional_cur || "USD" });
+    } else if (feeMode === "air_sea") {
+      if (+o.fee_1) feeLines.push({ label: "Airfreight fee", amount: +o.fee_1, currency: o.fee_1_cur || "USD" });
+      if (+o.fee_clearance) feeLines.push({ label: "Clearance fee", amount: +o.fee_clearance, currency: o.fee_clearance_cur || "SGD" });
+      if (+o.fee_2) feeLines.push({ label: `Seafreight (${cbmB.toFixed(2)} CBM × ${(+o.fee_2).toLocaleString()})`, amount: sf2Total, currency: o.fee_2_cur || "IDR" });
+      if (+o.fee_additional) feeLines.push({ label: "Additional cost", amount: +o.fee_additional, currency: o.fee_additional_cur || "USD" });
+    } else { // sea_sea
+      if (+o.fee_1) feeLines.push({ label: `Seafreight USA→SIN (${cbmA.toFixed(2)} CBM × ${(+o.fee_1).toLocaleString()})`, amount: sf1Total, currency: o.fee_1_cur || "USD" });
+      if (+o.fee_clearance) feeLines.push({ label: "Clearance fee", amount: +o.fee_clearance, currency: o.fee_clearance_cur || "SGD" });
+      if (+o.fee_2) feeLines.push({ label: `Seafreight SIN→JKT (${cbmB.toFixed(2)} CBM × ${(+o.fee_2).toLocaleString()})`, amount: sf2Total, currency: o.fee_2_cur || "IDR" });
+      if (+o.fee_additional) feeLines.push({ label: "Additional cost", amount: +o.fee_additional, currency: o.fee_additional_cur || "USD" });
+    }
+    // Extra costs added at invoice time
+    (o.extra_costs||[]).forEach(ec => feeLines.push({ label: ec.label, amount: +ec.amount, currency: ec.currency || "IDR" }));
+
+    return { vol: totalVol, charged, chargedAuto, basis, minApplied: totalRaw <= 3, rate, price: weightPrice, divisor: div, pkgCount: pkgs.length, feeLines, feeMode };
   };
   const shipCostIDR = (sid) => costsFor(sid).reduce((a,c)=>a+toIDR(c.amount,c.currency,D.fx),0);
   const orderCostIDR = (o) => {
@@ -191,7 +222,7 @@ function Orders({ctx}){
               <Detail label="Actual weight" value={`${o.weight_kg} kg`}/>
               <Detail label="Volumetric" value={`${qd.vol.toFixed(1)} kg`}/>
               <Detail label="Charged on" value={qd.minApplied?"3kg minimum":qd.basis} strong/>
-              <Detail label="Rate / kg" value={fmtIDR(qd.rate)}/>
+              <Detail label="Rate / kg" value={o.price_currency==="USD"?`$${qd.rate.toLocaleString()}`:o.price_currency==="SGD"?`S$${qd.rate.toLocaleString()}`:fmtIDR(qd.rate)}/>
               {isOwner&&<><Detail label="Revenue" value={fmtIDR(Number(o.sell_idr))}/><Detail label="Allocated cost" value={fmtIDR(cost)}/><Detail label="Gross profit" value={fmtIDR(m)} strong/></>}
             </div>
             {!isOwner&&<div style={S.adminNote}><AlertCircle size={13}/> Landed cost &amp; margin are visible to the owner only.</div>}
@@ -510,18 +541,54 @@ function Invoices({ctx}){
         </button>
       );})}
     </div>
-    {openId && <InvoiceDoc ctx={ctx} order={filtered.find(o=>o.id===openId)} onComplete={handleComplete}/>}
+    {openId && <InvoiceDoc ctx={ctx} order={filtered.find(o=>o.id===openId)} onComplete={handleComplete} reload={reload}/>}
   </>);
 }
 
-function InvoiceDoc({ctx,order,onComplete}){
+function InvoiceDoc({ctx,order,onComplete,reload}){
   const {D,custName,courierOf,shipmentOf,quote}=ctx;
   const q=quote(order);const s=shipmentOf(order.shipment_id);const c=courierOf(s?.courier_id);
   const invNo="INV-"+order.id.replace("ORD-","");
   const customer=D.customers.find(cu=>cu.id===order.customer_id);
 
+  const [usdRate,setUsdRate]=useState(order.invoice_usd_rate || "");
+  const [sgdRate,setSgdRate]=useState(order.invoice_sgd_rate || "");
+  const [newCostLabel,setNewCostLabel]=useState("");
+  const [newCostAmt,setNewCostAmt]=useState("");
+  const [newCostCur,setNewCostCur]=useState("IDR");
+  const [saving,setSaving]=useState(false);
+
+  const fxU=+usdRate||ctx.liveFx?.usd_idr||15850;
+  const fxS=+sgdRate||ctx.liveFx?.sgd_idr||11900;
+  const toIDR=(amt,cur)=>cur==="USD"?(+amt||0)*fxU:cur==="SGD"?(+amt||0)*fxS:(+amt||0);
+  const fmtOrig=(amt,cur)=>cur==="USD"?`$${Number(amt||0).toFixed(2)}`:cur==="SGD"?`S$${Number(amt||0).toFixed(2)}`:fmtIDR(amt||0);
+
+  const grandTotalIDR=q.feeLines.reduce((a,l)=>a+toIDR(l.amount,l.currency),0);
+
+  async function saveRates(){
+    setSaving(true);
+    await updateOrder(order.id,{invoice_usd_rate:+usdRate||null,invoice_sgd_rate:+sgdRate||null,sell_idr:Math.round(grandTotalIDR)});
+    setSaving(false);
+    reload&&reload();
+  }
+
+  async function addCost(){
+    if(!newCostLabel.trim()||!newCostAmt) return;
+    const extra=[...(order.extra_costs||[]),{label:newCostLabel.trim(),amount:+newCostAmt,currency:newCostCur}];
+    await updateOrder(order.id,{extra_costs:extra,sell_idr:Math.round(grandTotalIDR+toIDR(+newCostAmt,newCostCur))});
+    setNewCostLabel("");setNewCostAmt("");
+    reload&&reload();
+  }
+  async function removeCost(idx){
+    const extra=(order.extra_costs||[]).filter((_,i)=>i!==idx);
+    const removed=(order.extra_costs||[])[idx];
+    const newTotal=grandTotalIDR-toIDR(removed.amount,removed.currency);
+    await updateOrder(order.id,{extra_costs:extra,sell_idr:Math.round(newTotal)});
+    reload&&reload();
+  }
+
   function downloadPDF(){
-    const doc=generateInvoicePDF(order,customer,s,c,ctx.liveFx,D.orders);
+    const doc=generateInvoicePDF(order,customer,s,c,{usd_idr:fxU,sgd_idr:fxS},D.orders);
     doc.save(`${invNo}.pdf`);
   }
 
@@ -538,14 +605,57 @@ function InvoiceDoc({ctx,order,onComplete}){
         <div><div style={S.dLabel}>Shipment</div><div>{order.shipment_id} · {c?.name}</div></div>
         <div><div style={S.dLabel}>Status</div><div style={{color:"var(--good)",fontWeight:600}}>Delivered</div></div>
         <div><div style={S.dLabel}>Payment</div><div className={"paybadge pay-"+(s?.payment??"Unpaid")} style={{display:"inline-block"}}>{s?.payment??"Unpaid"}</div></div></div>
-      <div style={S.invTableHead}><span style={{flex:3}}>Description</span><span style={{flex:1,textAlign:"right"}}>Chargeable</span><span style={{flex:1,textAlign:"right"}}>Rate</span><span style={{flex:1,textAlign:"right"}}>Amount</span></div>
-      <div style={S.invLine}>
-        <span style={{flex:3}}><div style={{fontWeight:600}}>{order.product} ×{order.qty}</div>
-          <div style={{fontSize:12,color:"var(--ink-3)"}}>{q.minApplied?"3 kg minimum applied":`Charged on ${q.basis} weight`} ({q.charged.toFixed(1)} kg) · {c?.name} ÷{q.divisor}</div></span>
-        <span style={{flex:1,textAlign:"right"}}>{q.charged.toFixed(1)} kg</span>
-        <span style={{flex:1,textAlign:"right"}}>{fmtIDR(q.rate)}</span>
-        <span style={{flex:1,textAlign:"right",fontWeight:600}}>{fmtIDR(q.price)}</span></div>
-      <div style={S.invTotal}><span>Total due</span><span style={{fontFamily:"var(--display)",fontSize:22,fontWeight:800,color:"var(--accent)"}}>{fmtIDR(q.price)}</span></div>
+
+      {/* Line items in original currencies */}
+      <div style={S.invTableHead}><span style={{flex:3}}>Description</span><span style={{flex:1,textAlign:"right"}}>Amount</span><span style={{flex:1,textAlign:"right"}}>In IDR</span></div>
+      {q.feeLines.map((l,i)=>(
+        <div key={i} style={S.invLine}>
+          <span style={{flex:3}}>{l.label}</span>
+          <span style={{flex:1,textAlign:"right"}}>{fmtOrig(l.amount,l.currency)}</span>
+          <span style={{flex:1,textAlign:"right",fontWeight:600}}>{fmtIDR(toIDR(l.amount,l.currency))}</span>
+        </div>
+      ))}
+      {q.feeLines.length===0 && <div style={{padding:"12px 0",fontSize:13,color:"var(--ink-3)"}}>No fee lines recorded for this order.</div>}
+
+      {/* Add extra cost */}
+      <div style={S.addCostBox}>
+        <div style={{fontSize:12,fontWeight:700,color:"var(--ink-3)",letterSpacing:".04em",marginBottom:8}}>ADD COST LINE</div>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+          <input style={{...S.input,flex:2,minWidth:140}} placeholder="Description (e.g. Handling fee)" value={newCostLabel} onChange={e=>setNewCostLabel(e.target.value)}/>
+          <input style={{...S.input,width:110}} type="number" placeholder="Amount" value={newCostAmt} onChange={e=>setNewCostAmt(e.target.value)}/>
+          <select style={{...S.input,width:80}} value={newCostCur} onChange={e=>setNewCostCur(e.target.value)}>
+            <option value="IDR">IDR</option><option value="USD">USD</option><option value="SGD">SGD</option>
+          </select>
+          <button style={S.printBtn} onClick={addCost}><Plus size={13}/> Add cost</button>
+        </div>
+        {(order.extra_costs||[]).length>0 && (
+          <div style={{marginTop:10,display:"flex",flexDirection:"column",gap:4}}>
+            {(order.extra_costs||[]).map((ec,i)=>(
+              <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",fontSize:13,padding:"4px 0"}}>
+                <span>{ec.label}</span>
+                <span style={{display:"flex",alignItems:"center",gap:8}}>
+                  {fmtOrig(ec.amount,ec.currency)} ({fmtIDR(toIDR(ec.amount,ec.currency))})
+                  <button onClick={()=>removeCost(i)} style={{background:"transparent",border:"none",color:"var(--bad)",cursor:"pointer",padding:2}}><Trash2 size={13}/></button>
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Conversion rates */}
+      <div style={S.addCostBox}>
+        <div style={{fontSize:12,fontWeight:700,color:"var(--ink-3)",letterSpacing:".04em",marginBottom:8}}>CONVERSION RATES (this invoice only)</div>
+        <div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"flex-end"}}>
+          <label style={{flex:1,minWidth:140}}><span style={{display:"block",fontSize:12,color:"var(--ink-3)",marginBottom:4}}>USD → IDR</span>
+            <input style={S.input} type="number" value={usdRate} onChange={e=>setUsdRate(e.target.value)} placeholder={`e.g. ${ctx.liveFx?.usd_idr||15850}`}/></label>
+          <label style={{flex:1,minWidth:140}}><span style={{display:"block",fontSize:12,color:"var(--ink-3)",marginBottom:4}}>SGD → IDR</span>
+            <input style={S.input} type="number" value={sgdRate} onChange={e=>setSgdRate(e.target.value)} placeholder={`e.g. ${ctx.liveFx?.sgd_idr||11900}`}/></label>
+          <button style={S.printBtn} onClick={saveRates} disabled={saving}>{saving?"Saving…":"Save rates"}</button>
+        </div>
+      </div>
+
+      <div style={S.invTotal}><span>Total due</span><span style={{fontFamily:"var(--display)",fontSize:22,fontWeight:800,color:"var(--accent)"}}>{fmtIDR(grandTotalIDR)}</span></div>
       <div style={S.invFoot}><span>Payment in IDR within 14 days · Bank transfer to JEI account</span>
         <div style={{display:"flex",gap:8}}>
           <button style={S.printBtn} onClick={downloadPDF}><Download size={13}/> Download PDF</button>
@@ -693,6 +803,7 @@ const S={
   invTableHead:{display:"flex",gap:10,fontSize:11,textTransform:"uppercase",letterSpacing:".07em",color:"var(--ink-3)",fontWeight:700,paddingBottom:8,borderBottom:"1px solid var(--line)"},
   invLine:{display:"flex",gap:10,padding:"16px 0",borderBottom:"1px solid var(--line)",alignItems:"flex-start"},
   invTotal:{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"18px 0",fontWeight:700,fontSize:15},
+  addCostBox:{background:"var(--head)",border:"1px solid var(--line)",borderRadius:10,padding:"12px 14px",marginTop:14,marginBottom:14},
   invFoot:{display:"flex",justifyContent:"space-between",alignItems:"center",borderTop:"1px solid var(--line)",paddingTop:16,fontSize:12,color:"var(--ink-3)",flexWrap:"wrap",gap:12},
   printBtn:{display:"flex",alignItems:"center",gap:6,background:"var(--accent)",color:"#fff",border:"none",borderRadius:9,padding:"8px 14px",fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"var(--body)"},
   empty:{padding:"40px 20px",textAlign:"center",color:"var(--ink-3)",background:"var(--card)",border:"1px dashed var(--line)",borderRadius:14},

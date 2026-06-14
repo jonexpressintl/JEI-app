@@ -77,36 +77,63 @@ export function generateInvoicePDF(order, customer, shipment, courier, liveFx) {
     doc.text("Ship to: " + customer.address, bx, by + 36);
   }
 
-  // Line items
+  // Line items — from feeLines (multi-currency, computed by quote())
+  const isAirM = (m) => m && m !== "Seafreight";
+  const div = +order.divisor || 5000;
   const pkgs = order.packages?.length > 0 ? order.packages : [{ weight: +order.weight_kg, l: +order.dim_l_cm, w: +order.dim_w_cm, h: +order.dim_h_cm }];
-  const div = courier?.divisor || 5000;
-  let totalKg = 0;
-  pkgs.forEach(p => { totalKg += chargeable({ l: +p.l, w: +p.w, h: +p.h }, +p.weight, div).charged; });
-
+  let totalRaw = 0;
+  pkgs.forEach(p => { totalRaw += chargeable({ l: +p.l, w: +p.w, h: +p.h }, +p.weight, div).raw; });
+  const chargedAuto = Math.ceil(totalRaw * 2) / 2;
+  const charged = +order.charged_override || chargedAuto;
   const rate = +order.price_per_kg || customer?.rate_per_kg || 0;
-  const cur = order.price_currency || "IDR";
-  const amt = totalKg * rate;
-  const shipDesc = `Shipment ${shipment?.id || "—"} ( USA - JKT by ${courier?.name || "Air"} , ${pkgs.length} ctn${pkgs.length > 1 ? "s" : ""} )`;
+
+  const feeMode = isAirM(order.shipping_us_sg) && isAirM(order.shipping_sg_id) ? "air_air"
+    : isAirM(order.shipping_us_sg) && !isAirM(order.shipping_sg_id) ? "air_sea" : "sea_sea";
+  const autoCBM = pkgs.reduce((a,p)=>a+((+p.l)*(+p.w)*(+p.h))/1000000,0);
+  const cbmA = +order.cbm_us_sg || autoCBM;
+  const cbmB = +order.cbm_sg_id || autoCBM;
+  const sf1Total = (+order.fee_1||0) * cbmA;
+  const sf2Total = (+order.fee_2||0) * cbmB;
+
+  let feeLines = [];
+  const weightPrice = charged * rate;
+  if (feeMode === "air_air" || (feeMode === "air_sea" && order.air_sea_option !== "breakdown")) {
+    feeLines.push({ label: `Shipment ${shipment?.id || "—"} (${order.shipping_us_sg||"Air"} / ${order.shipping_sg_id||"Air"}, ${pkgs.length} pkg, ${charged.toFixed(1)}kg)`, amount: weightPrice, currency: order.price_currency || "USD" });
+    if (+order.fee_additional) feeLines.push({ label: "Additional cost", amount: +order.fee_additional, currency: order.fee_additional_cur || "USD" });
+  } else if (feeMode === "air_sea") {
+    if (+order.fee_1) feeLines.push({ label: "Airfreight fee", amount: +order.fee_1, currency: order.fee_1_cur || "USD" });
+    if (+order.fee_clearance) feeLines.push({ label: "Clearance fee", amount: +order.fee_clearance, currency: order.fee_clearance_cur || "SGD" });
+    if (+order.fee_2) feeLines.push({ label: `Seafreight (${cbmB.toFixed(2)} CBM)`, amount: sf2Total, currency: order.fee_2_cur || "IDR" });
+    if (+order.fee_additional) feeLines.push({ label: "Additional cost", amount: +order.fee_additional, currency: order.fee_additional_cur || "USD" });
+  } else {
+    if (+order.fee_1) feeLines.push({ label: `Seafreight USA→SIN (${cbmA.toFixed(2)} CBM)`, amount: sf1Total, currency: order.fee_1_cur || "USD" });
+    if (+order.fee_clearance) feeLines.push({ label: "Clearance fee", amount: +order.fee_clearance, currency: order.fee_clearance_cur || "SGD" });
+    if (+order.fee_2) feeLines.push({ label: `Seafreight SIN→JKT (${cbmB.toFixed(2)} CBM)`, amount: sf2Total, currency: order.fee_2_cur || "IDR" });
+    if (+order.fee_additional) feeLines.push({ label: "Additional cost", amount: +order.fee_additional, currency: order.fee_additional_cur || "USD" });
+  }
+  (order.extra_costs||[]).forEach(ec => feeLines.push({ label: ec.label, amount: +ec.amount, currency: ec.currency || "IDR" }));
+
+  const fx = liveFx || { usd_idr: 15850, sgd_idr: 11900 };
+  const toIDR = (amt, c) => c === "USD" ? (+amt||0) * fx.usd_idr : c === "SGD" ? (+amt||0) * fx.sgd_idr : (+amt||0);
 
   const t1 = autoTable(doc, {
     startY: Math.max(cy, by + 40) + 2,
-    head: [["Description", "Units", "Price/kg", "Amount"]],
-    body: [[shipDesc, totalKg.toFixed(1), fmtAmt(rate, cur), fmtAmt(amt, cur)]],
-    styles: { fontSize: 9, cellPadding: 5, textColor: INK, lineColor: LN, lineWidth: 0.3 },
+    head: [["Description", "Amount", "In IDR"]],
+    body: feeLines.length > 0 ? feeLines.map(l => [l.label, fmtAmt(l.amount, l.currency), fmtRp(toIDR(l.amount, l.currency))]) : [["No fee lines recorded", "", ""]],
+    styles: { fontSize: 8.5, cellPadding: 5, textColor: INK, lineColor: LN, lineWidth: 0.3 },
     headStyles: { fillColor: BG, textColor: INK, fontStyle: "bold" },
-    columnStyles: { 1: { halign: "right" }, 2: { halign: "right" }, 3: { halign: "right", fontStyle: "bold" } },
+    columnStyles: { 0: { cellWidth: 100 }, 1: { halign: "right", cellWidth: 40 }, 2: { halign: "right", cellWidth: 40 } },
     theme: "grid", margin: M,
   });
 
   // Totals
-  const fx = liveFx || { usd_idr: 15850 };
-  const totalIDR = cur === "USD" ? Math.round(amt * fx.usd_idr) : Math.round(amt);
+  const totalIDR = feeLines.reduce((a,l)=>a+toIDR(l.amount,l.currency),0);
 
   autoTable(doc, {
     startY: (t1?.finalY ?? 100) + 4,
     body: [
-      [{ content: "Invoice Subtotal", styles: { halign: "right" } }, fmtAmt(amt, cur)],
-      [{ content: "Conversion Rate", styles: { halign: "right" } }, cur === "USD" ? fmtRp(fx.usd_idr) : "—"],
+      [{ content: "USD → IDR rate", styles: { halign: "right" } }, fmtRp(fx.usd_idr)],
+      [{ content: "SGD → IDR rate", styles: { halign: "right" } }, fmtRp(fx.sgd_idr)],
       [{ content: "Sales Tax", styles: { halign: "right" } }, ""],
       [{ content: "Discount", styles: { halign: "right" } }, ""],
       [{ content: "Deposit Received", styles: { halign: "right" } }, ""],
