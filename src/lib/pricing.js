@@ -3,15 +3,24 @@ export const MIN_KG = 3;
 export const IN_TO_CM = 2.54;
 export const LB_TO_KG = 0.453592;
 
-// chargeable weight = max(actual, volumetric), floored at 3kg
+// Per-package greater-of(actual, volumetric) — NO 3kg floor here.
+// The 3kg minimum applies to the TOTAL across all packages in a shipment,
+// not to each package individually (see applyMinimum below).
 export function chargeable(dims, wtKg, divisor) {
   const vol = (dims.l * dims.w * dims.h) / divisor;
   const greater = Math.max(wtKg, vol);
   const basis = vol > wtKg ? "volumetric" : "actual";
-  const raw = Math.max(greater, MIN_KG);
-  // Round UP to nearest 0.5 kg (e.g. 3.2 → 3.5, 3.7 → 4.0)
-  const charged = Math.ceil(raw * 2) / 2;
-  return { vol, greater, charged, raw, basis, minApplied: greater < MIN_KG };
+  // raw = greater-of actual/volumetric for THIS package, unrounded, no floor
+  const raw = greater;
+  return { vol, greater, raw, basis, minApplied: false };
+}
+
+// Apply the 3kg minimum + round-up-to-0.5 to a SUMMED raw total.
+// Use this once per shipment/order on the sum of per-package `raw` values.
+export function finalizeCharged(totalRaw) {
+  const floored = Math.max(totalRaw, MIN_KG);
+  const charged = Math.ceil(floored * 2) / 2; // round up to nearest 0.5 kg
+  return { charged, minApplied: totalRaw < MIN_KG };
 }
 
 export function fmtIDR(n) {
@@ -46,12 +55,14 @@ export function trackingUrl(carrier, number) {
 }
 
 // Multi-piece: calculate total chargeable weight across all packages
+// (3kg minimum + 0.5kg rounding applied ONCE to the summed total, not per package)
 export function multiChargeable(packages, divisor) {
   if (!packages || packages.length === 0) return { total: 0, details: [] };
   const details = packages.map((p, i) => {
     const ch = chargeable({ l: +p.l, w: +p.w, h: +p.h }, +p.weight, divisor);
     return { ...ch, index: i };
   });
-  const total = details.reduce((a, d) => a + d.charged, 0);
+  const totalRaw = details.reduce((a, d) => a + d.raw, 0);
+  const { charged: total } = finalizeCharged(totalRaw);
   return { total, details };
 }

@@ -1,6 +1,6 @@
 import { useState, useMemo, useRef, useEffect } from "react";
 import { X, Trash2, Plus, ArrowRight, ArrowLeft, Check, Package } from "lucide-react";
-import { chargeable, fmtIDR, IN_TO_CM, LB_TO_KG } from "../lib/pricing";
+import { chargeable, finalizeCharged, fmtIDR, IN_TO_CM, LB_TO_KG } from "../lib/pricing";
 import { addOrder, updateOrder, cascadeDeleteOrder, nextOrderId, addShipmentSafe, nextShipmentId, addCustomer, updateCustomer } from "../lib/data";
 import ConfirmDialog from "./ConfirmDialog";
 
@@ -83,7 +83,7 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
   // Sum RAW chargeable (unrounded) across all packages, then round total once
   let totalRaw = 0;
   metricPkgs.forEach(p => { totalRaw += chargeable({ l: p.l, w: p.w, h: p.h }, p.weight, div).raw; });
-  const totalChargedAuto = Math.ceil(totalRaw * 2) / 2;
+  const totalChargedAuto = finalizeCharged(totalRaw).charged;
   // User can override the final charged kg (e.g. for discounted pricing)
   const totalCharged = +f.charged_override || totalChargedAuto;
 
@@ -315,7 +315,7 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
                     <span style={S.pkgVs}>vs</span>
                     <span style={ch.basis === "volumetric" ? S.pkgWinner : S.pkgDim}>Vol: {ch.vol.toFixed(2)} kg</span>
                     <span style={S.pkgArrow}>→</span>
-                    <span style={S.pkgCharged}>{ch.raw.toFixed(2)} kg {ch.minApplied ? "(min 3kg)" : `(${ch.basis})`}</span>
+                    <span style={S.pkgCharged}>{ch.raw.toFixed(2)} kg ({ch.basis})</span>
                   </div>
                 </div>
               );
@@ -325,7 +325,7 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
               <div style={S.pkgTotalRow}>
                 <span>Total actual: <b>{metricPkgs.reduce((a, p) => a + p.weight, 0).toFixed(2)} kg</b></span>
                 <span>Total vol: <b>{metricPkgs.reduce((a, p) => a + chargeable({ l: p.l, w: p.w, h: p.h }, p.weight, div).vol, 0).toFixed(2)} kg</b></span>
-                <span>Auto charged: <b>{totalChargedAuto.toFixed(1)} kg</b></span>
+                <span>Auto charged: <b>{totalChargedAuto.toFixed(1)} kg</b>{totalRaw < 3 ? <span style={{color:"var(--accent)",fontWeight:600}}> (3kg min applied)</span> : ""}</span>
               </div>
               <div style={{...S.pkgTotalRow, alignItems:"center", borderTop:"1px solid var(--line)", paddingTop:8, marginTop:2}}>
                 <label style={{display:"flex",alignItems:"center",gap:8,flex:1}}>
