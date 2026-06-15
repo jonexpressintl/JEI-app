@@ -2,7 +2,7 @@ import { useState, useMemo, useRef, useEffect } from "react";
 import { Package, Ship, Truck, Eye, EyeOff, Search, ChevronRight, AlertCircle, CheckCircle2, FileText, Calculator, Tag, LayoutGrid, Plus, Printer, LogOut, RefreshCw, Pencil, Boxes, Circle, CreditCard, ExternalLink, Copy, Check, Download, Upload, Users, DollarSign, TrendingUp, Trash2 } from "lucide-react";
 import { useAuth } from "../lib/auth";
 import { useJEIData, updateCustomerRate, addCustomer, setShipmentStage, setShipmentPayment, setShipmentTracking, completeOrder, updateOrder } from "../lib/data";
-import { chargeable, finalizeCharged, fmtIDR, fmtShort, toIDR, trackingUrl, MIN_KG, IN_TO_CM, LB_TO_KG } from "../lib/pricing";
+import { chargeable, fmtIDR, fmtShort, toIDR, trackingUrl, MIN_KG, IN_TO_CM, LB_TO_KG } from "../lib/pricing";
 import { generateInvoicePDF, generateQuotationPDF } from "../lib/pdf";
 import { fetchLiveRates } from "../lib/fx";
 import { exportCSV, exportOrders } from "../lib/csv";
@@ -61,7 +61,7 @@ export default function Dashboard() {
       const ch = chargeable({ l: +p.l, w: +p.w, h: +p.h }, +p.weight, div);
       totalRaw += ch.raw; totalVol += ch.vol; totalActual += +p.weight;
     });
-    const { charged: chargedAuto, minApplied } = finalizeCharged(totalRaw); // 3kg min + round to 0.5, applied to TOTAL
+    const chargedAuto = Math.ceil(totalRaw * 2) / 2; // round total to 0.5
     const charged = +o.charged_override || chargedAuto;
     const basis = totalVol > totalActual ? "volumetric" : "actual";
     const rate = Number(o.price_per_kg) || custRate(o.customer_id) || 0;
@@ -96,7 +96,7 @@ export default function Dashboard() {
     // Extra costs added at invoice time
     (o.extra_costs||[]).forEach(ec => feeLines.push({ label: ec.label, amount: +ec.amount, currency: ec.currency || "IDR" }));
 
-    return { vol: totalVol, charged, chargedAuto, basis, minApplied, rate, price: weightPrice, divisor: div, pkgCount: pkgs.length, feeLines, feeMode };
+    return { vol: totalVol, charged, chargedAuto, basis, minApplied: totalRaw <= 3, rate, price: weightPrice, divisor: div, pkgCount: pkgs.length, feeLines, feeMode };
   };
   const shipCostIDR = (sid) => costsFor(sid).reduce((a,c)=>a+toIDR(c.amount,c.currency,D.fx),0);
   const orderCostIDR = (o) => {
@@ -217,7 +217,6 @@ function Orders({ctx}){
           </span>
           {sel===o.id&&(<div style={S.detail}>
             <div style={S.detailGrid}>
-              <Detail label="Order date" value={o.order_date ? new Date(o.order_date).toLocaleDateString("en-GB") : "—"}/>
               <Detail label="Shipment" value={o.shipment_id+(consol?" (consolidated)":" (single)")}/>
               <Detail label="Courier" value={`${courierOf(s?.courier_id)?.name??"—"} · ÷${qd.divisor}`}/>
               <Detail label="Actual weight" value={`${o.weight_kg} kg`}/>
@@ -240,23 +239,18 @@ function Shipments({ctx}){
   const {D,custName,courierOf,reload}=ctx;
   const [busy,setBusy]=useState(null);
   const [q,setQ]=useState("");
-  const [stageFilter,setStageFilter]=useState(null); // null = all stages
 
   async function advance(sid,stage){setBusy(sid+stage);await setShipmentStage(sid,stage);await reload();setBusy(null);}
   async function setPay(sid,payment){setBusy(sid+payment);await setShipmentPayment(sid,payment);await reload();setBusy(null);}
 
   // Only show shipments that have at least one order
   const activeShipments=D.shipments.filter(s=>D.orders.some(o=>o.shipment_id===s.id));
-  const stageCounts=STAGES.map(st=>activeShipments.filter(s=>s.stage===st).length);
   const list=activeShipments
-    .filter(s=>stageFilter===null||s.stage===stageFilter)
     .filter(s=>[s.id,s.stage,s.payment].join(" ").toLowerCase().includes(q.toLowerCase()))
     .sort((a,b)=>a.id<b.id?1:-1);
 
   // unpaid-but-delivered = money owed
   const owed=activeShipments.filter(s=>s.stage==="Delivered to customer"&&s.payment!=="Paid").length;
-
-  const stageShortLabels=["In US","Sent from US","In SG","Sent to ID","In ID","Delivered"];
 
   return(<>
     <div style={S.sectionLead}><h2 style={S.h2}>Shipments</h2>
@@ -267,23 +261,7 @@ function Shipments({ctx}){
       <Kpi label="Delivered, unpaid" value={owed} sub="money owed" warn={owed>0}/>
       <Kpi label="Paid" value={activeShipments.filter(s=>s.payment==="Paid").length} sub="settled"/>
     </section>
-
-    {/* Stage breakdown — click a stage to filter the list below */}
-    <div style={S.stageBar}>
-      <button style={stageFilter===null?S.stageChipOn:S.stageChipOff} onClick={()=>setStageFilter(null)}>
-        <span style={{fontSize:18,fontWeight:800}}>{activeShipments.length}</span>
-        <span style={{fontSize:11}}>All</span>
-      </button>
-      {STAGES.map((st,i)=>(
-        <button key={st} style={stageFilter===st?S.stageChipOn:S.stageChipOff} onClick={()=>setStageFilter(stageFilter===st?null:st)} title={st}>
-          <span style={{fontSize:18,fontWeight:800}}>{stageCounts[i]}</span>
-          <span style={{fontSize:11,textAlign:"center"}}>{stageShortLabels[i]}</span>
-        </button>
-      ))}
-    </div>
-
     <div style={S.searchWrap}><Search size={15} style={{opacity:.5}}/><input style={S.search} placeholder="Search shipments…" value={q} onChange={e=>setQ(e.target.value)}/></div>
-    {stageFilter!==null && <div style={S.filterNote}>Showing only: <b>{stageFilter}</b> <button style={S.clearFilterBtn} onClick={()=>setStageFilter(null)}>Clear filter</button></div>}
 
     <div style={{display:"flex",flexDirection:"column",gap:14}}>
       {list.map(s=>{
@@ -442,7 +420,7 @@ function QuoteCalc({ctx}){
   const div=shUsSg==="Seafreight"||shUsSg==="FedEx Freight"?6000:5000;
   const mPkgs=pkgs.map(p=>{const u=p.unit||"metric";return{weight:u==="imperial"?+p.weight*LB_TO_KG:+p.weight,l:u==="imperial"?+p.l*IN_TO_CM:+p.l,w:u==="imperial"?+p.w*IN_TO_CM:+p.w,h:u==="imperial"?+p.h*IN_TO_CM:+p.h};});
   let tRaw=0;mPkgs.forEach(p=>{tRaw+=chargeable({l:p.l,w:p.w,h:p.h},p.weight,div).raw;});
-  const tAuto=finalizeCharged(tRaw).charged;const tCharged=+chargedOvr||tAuto;
+  const tAuto=Math.ceil(tRaw*2)/2;const tCharged=+chargedOvr||tAuto;
   const wPrice=tCharged*(+pricePerKg);
   const aCBM=mPkgs.reduce((a,p)=>a+(p.l*p.w*p.h)/1000000,0);
   const cA=+cbmUsSgOvr||aCBM;const cB=+cbmSgIdOvr||aCBM;
@@ -778,11 +756,6 @@ const S={
   kpiVal:{fontFamily:"var(--display)",fontSize:25,fontWeight:800,margin:"4px 0 2px"},
   kpiSub:{fontSize:11.5,color:"var(--ink-3)"},
   searchWrap:{display:"flex",alignItems:"center",gap:8,background:"var(--card)",border:"1px solid var(--line)",borderRadius:11,padding:"9px 13px",marginBottom:14},
-  stageBar:{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(70px,1fr))",gap:8,marginBottom:14},
-  stageChipOn:{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:2,background:"var(--accent)",color:"#fff",border:"1px solid var(--accent)",borderRadius:11,padding:"10px 4px",cursor:"pointer",fontFamily:"var(--body)",minHeight:54},
-  stageChipOff:{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:2,background:"var(--card)",color:"var(--ink)",border:"1px solid var(--line)",borderRadius:11,padding:"10px 4px",cursor:"pointer",fontFamily:"var(--body)",minHeight:54},
-  filterNote:{display:"flex",alignItems:"center",gap:10,fontSize:13,color:"var(--ink-2)",marginBottom:12,padding:"8px 13px",background:"var(--good-bg)",borderRadius:9},
-  clearFilterBtn:{background:"transparent",border:"1px solid var(--line)",borderRadius:7,padding:"3px 10px",fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"var(--body)",color:"var(--ink-2)"},
   search:{border:"none",outline:"none",background:"transparent",flex:1,fontSize:14,color:"var(--ink)",fontFamily:"var(--body)"},
   primaryBtn:{display:"flex",alignItems:"center",gap:6,background:"var(--accent)",color:"#fff",border:"none",borderRadius:11,padding:"0 18px",fontSize:14,fontWeight:700,cursor:"pointer",fontFamily:"var(--body)"},
   secBtn:{display:"flex",alignItems:"center",gap:5,background:"var(--card)",border:"1px solid var(--line)",color:"var(--ink-2)",borderRadius:10,padding:"9px 13px",fontSize:12.5,fontWeight:600,cursor:"pointer",fontFamily:"var(--body)"},

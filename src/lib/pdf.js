@@ -1,6 +1,6 @@
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
-import { chargeable, finalizeCharged, fmtIDR } from "./pricing";
+import { chargeable, fmtIDR } from "./pricing";
 import { LOGO } from "./logo";
 
 const INK = [33, 33, 33];
@@ -103,7 +103,7 @@ export function generateInvoicePDF(order, customer, shipment, courier, liveFx) {
   const pkgs = order.packages?.length > 0 ? order.packages : [{ weight: +order.weight_kg, l: +order.dim_l_cm, w: +order.dim_w_cm, h: +order.dim_h_cm }];
   let totalRaw = 0;
   pkgs.forEach(p => { totalRaw += chargeable({ l: +p.l, w: +p.w, h: +p.h }, +p.weight, div).raw; });
-  const chargedAuto = finalizeCharged(totalRaw).charged;
+  const chargedAuto = Math.ceil(totalRaw * 2) / 2;
   const charged = +order.charged_override || chargedAuto;
   const rate = +order.price_per_kg || customer?.rate_per_kg || 0;
 
@@ -245,24 +245,23 @@ export function generateQuotationPDF({ customerName, packages, divisor, courierN
   // Package breakdown table
   const pkgs = packages || [];
   const body = [];
-  let totalRaw = 0, totalActual = 0, totalVol = 0;
+  let totalCharged = 0, totalActual = 0, totalVol = 0;
   pkgs.forEach((p, i) => {
     const ch = chargeable({ l: +p.l, w: +p.w, h: +p.h }, +p.weight, divisor);
-    totalRaw += ch.raw; totalActual += +p.weight; totalVol += ch.vol;
+    totalCharged += ch.charged; totalActual += +p.weight; totalVol += ch.vol;
     body.push([
       `Package ${i + 1}`,
       `${(+p.weight).toFixed(1)} kg`,
       `${(+p.l).toFixed(0)} × ${(+p.w).toFixed(0)} × ${(+p.h).toFixed(0)} cm`,
       `${ch.vol.toFixed(1)} kg`,
-      `${ch.raw.toFixed(1)} kg`,
-      ch.basis,
+      `${ch.charged.toFixed(1)} kg`,
+      ch.basis + (ch.minApplied ? " (min 3kg)" : ""),
     ]);
   });
-  const { charged: totalCharged, minApplied } = finalizeCharged(totalRaw);
 
   const t1 = autoTable(doc, {
     startY: sepY + 6,
-    head: [["Package", "Actual Weight", "Dimensions (L×W×H)", "Volumetric", "Greater-of", "Basis"]],
+    head: [["Package", "Actual Weight", "Dimensions (L×W×H)", "Volumetric", "Charged", "Basis"]],
     body: body,
     styles: { fontSize: 8.5, cellPadding: 5, textColor: INK, lineColor: LN, lineWidth: 0.3 },
     headStyles: { fillColor: BG, textColor: INK, fontStyle: "bold", fontSize: 8 },
@@ -280,7 +279,7 @@ export function generateQuotationPDF({ customerName, packages, divisor, courierN
       [{ content: "Total Actual Weight", styles: { fontStyle: "bold" } }, `${totalActual.toFixed(1)} kg`],
       ["Total Volumetric Weight", `${totalVol.toFixed(1)} kg`],
       [{ content: "Total Chargeable Weight", styles: { fontStyle: "bold", fillColor: [220, 245, 240] } },
-       { content: `${totalCharged.toFixed(1)} kg` + (minApplied ? " (3kg min)" : ""), styles: { fontStyle: "bold", fillColor: [220, 245, 240] } }],
+       { content: `${totalCharged.toFixed(1)} kg`, styles: { fontStyle: "bold", fillColor: [220, 245, 240] } }],
       ["", ""],
       [{ content: "Rate per kg", styles: { fontStyle: "bold" } }, fmtAmt(ratePerKg, cur)],
       [{ content: "Estimated Total", styles: { fontStyle: "bold", fontSize: 11, fillColor: BG } },
