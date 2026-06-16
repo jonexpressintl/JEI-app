@@ -328,16 +328,16 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
               <div style={S.pkgTotalRow}>
                 <span>Total actual: <b>{metricPkgs.reduce((a, p) => a + p.weight, 0).toFixed(2)} kg</b></span>
                 <span>Total vol: <b>{metricPkgs.reduce((a, p) => a + chargeable({ l: p.l, w: p.w, h: p.h }, p.weight, div).vol, 0).toFixed(2)} kg</b></span>
-                <span>Auto charged: <b>{totalChargedAuto.toFixed(1)} kg</b>{totalRaw < 3 ? <span style={{color:"var(--accent)",fontWeight:600}}> (3kg min applied)</span> : ""}</span>
+                <span>Auto charged: <b>{totalChargedAuto.toFixed(1)} kg</b>{totalRaw < 3 ? <span style={{color:"var(--navy)",fontWeight:600}}> (3kg min applied)</span> : ""}</span>
               </div>
               <div style={{...S.pkgTotalRow, alignItems:"center", borderTop:"1px solid var(--line)", paddingTop:8, marginTop:2}}>
                 <label style={{display:"flex",alignItems:"center",gap:8,flex:1}}>
                   <span style={{fontSize:12.5,fontWeight:600,color:"var(--ink-2)"}}>Override charged weight (kg)</span>
                   <input type="number" value={f.charged_override} onChange={set("charged_override")}
                     placeholder={totalChargedAuto.toFixed(1)} style={{...S.input,width:90,textAlign:"center",padding:"6px 8px",fontSize:13,fontWeight:700,
-                    ...(f.charged_override ? {borderColor:"var(--accent)",color:"var(--accent)"} : {})}} />
+                    ...(f.charged_override ? {borderColor:"var(--navy)",color:"var(--navy)"} : {})}} />
                 </label>
-                <span style={{ fontWeight: 700, color: "var(--accent)", fontSize: 14 }}>
+                <span style={{ fontWeight: 700, color: "var(--navy)", fontSize: 14 }}>
                   Final: {totalCharged.toFixed(1)} kg
                   {f.charged_override && totalCharged < totalChargedAuto ? ` (↓${(totalChargedAuto - totalCharged).toFixed(1)} discount)` : ""}
                 </span>
@@ -581,7 +581,7 @@ function CustAutocomplete({ customers, value, selectedId, onChange }) {
           onFocus={() => setOpen(true)} placeholder="Type customer name…" autoComplete="off" />
       </Field>
       {selectedId && <div style={{ fontSize: 11, color: "var(--good)", fontWeight: 600, marginTop: -4, marginBottom: 6 }}>✓ Existing customer</div>}
-      {!selectedId && value.trim() && <div style={{ fontSize: 11, color: "var(--accent)", fontWeight: 600, marginTop: -4, marginBottom: 6 }}><Plus size={11} /> New customer</div>}
+      {!selectedId && value.trim() && <div style={{ fontSize: 11, color: "var(--navy)", fontWeight: 600, marginTop: -4, marginBottom: 6 }}><Plus size={11} /> New customer</div>}
       {open && (
         <div style={S.dropdown}>
           {matches.map(c => (
@@ -607,9 +607,9 @@ const S = {
   head: { padding: "16px 20px 10px", borderBottom: "1px solid var(--line)", display: "flex", alignItems: "center", gap: 12 },
   title: { fontFamily: "var(--display)", fontWeight: 800, fontSize: 17 },
   steps: { display: "flex", gap: 4, marginLeft: "auto", marginRight: 8 },
-  stepOn: { width: 28, height: 28, borderRadius: "50%", fontSize: 12, fontWeight: 700, color: "#fff", background: "var(--accent)", border: "none", cursor: "pointer", fontFamily: "var(--body)" },
+  stepOn: { width: 28, height: 28, borderRadius: "50%", fontSize: 12, fontWeight: 700, color: "#fff", background: "var(--navy)", border: "none", cursor: "pointer", fontFamily: "var(--body)" },
   stepOff: { width: 28, height: 28, borderRadius: "50%", fontSize: 12, fontWeight: 600, color: "var(--ink-3)", background: "var(--head)", border: "1px solid var(--line)", cursor: "pointer", fontFamily: "var(--body)" },
-  stepLabel: { padding: "10px 20px 0", fontSize: 13, fontWeight: 700, color: "var(--accent)", letterSpacing: ".02em" },
+  stepLabel: { padding: "10px 20px 0", fontSize: 13, fontWeight: 700, color: "var(--navy)", letterSpacing: ".02em" },
   x: { background: "transparent", border: "none", cursor: "pointer", color: "var(--ink-3)" },
   body: { padding: "12px 20px 16px", overflowY: "auto", flex: 1 },
   err: { background: "var(--bad-bg)", color: "var(--bad)", padding: "9px 13px", borderRadius: 9, marginBottom: 12, fontSize: 13 },
@@ -619,10 +619,10 @@ const S = {
   row2: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 },
   row3: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 },
   segRow: { display: "flex", gap: 6 },
-  togOn: { fontSize: 13, fontWeight: 600, padding: "8px 14px", borderRadius: 8, border: "1px solid var(--accent)", background: "var(--accent)", color: "#fff", cursor: "pointer", fontFamily: "var(--body)" },
+  togOn: { fontSize: 13, fontWeight: 600, padding: "8px 14px", borderRadius: 8, border: "1px solid var(--navy)", background: "var(--navy)", color: "#fff", cursor: "pointer", fontFamily: "var(--body)" },
   togOff: { fontSize: 13, fontWeight: 600, padding: "8px 14px", borderRadius: 8, border: "1px solid var(--line)", background: "var(--card)", color: "var(--ink-2)", cursor: "pointer", fontFamily: "var(--body)" },
   radioGroup: { display: "flex", flexWrap: "wrap", gap: 6 },
-  radioOn: { fontSize: 12.5, fontWeight: 600, padding: "9px 14px", borderRadius: 9, border: "2px solid var(--accent)", background: "var(--good-bg)", color: "var(--accent)", cursor: "pointer", fontFamily: "var(--body)" },
+  radioOn: { fontSize: 12.5, fontWeight: 600, padding: "9px 14px", borderRadius: 9, border: "2px solid var(--navy)", background: "var(--good-bg)", color: "var(--navy)", cursor: "pointer", fontFamily: "var(--body)" },
   radioOff: { fontSize: 12.5, fontWeight: 500, padding: "9px 14px", borderRadius: 9, border: "1px solid var(--line)", background: "var(--card)", color: "var(--ink-2)", cursor: "pointer", fontFamily: "var(--body)" },
   infoBox: { background: "var(--head)", border: "1px solid var(--line)", borderRadius: 10, padding: "12px 14px", fontSize: 13, color: "var(--ink-2)", display: "flex", alignItems: "flex-start", gap: 8, lineHeight: 1.6, marginTop: 8 },
   feeSection: { background: "var(--head)", border: "1px solid var(--line)", borderRadius: 12, padding: 16, marginBottom: 12 },
@@ -638,10 +638,10 @@ const S = {
   pkgUnit: { border: "1px solid var(--line)", borderRadius: 7, padding: "7px 2px", fontSize: 12, fontFamily: "var(--body)", background: "var(--card)", color: "var(--ink-3)", outline: "none", cursor: "pointer", width: 42, flexShrink: 0 },
   pkgX: { color: "var(--ink-3)", fontSize: 13, fontWeight: 600, flexShrink: 0 },
   pkgDel: { display: "grid", placeItems: "center", background: "transparent", border: "none", color: "var(--bad)", cursor: "pointer", padding: 4, width: 28, flexShrink: 0 },
-  addPkgBtn: { display: "flex", alignItems: "center", gap: 5, background: "transparent", border: "none", color: "var(--accent)", fontSize: 12, fontWeight: 700, letterSpacing: ".04em", cursor: "pointer", fontFamily: "var(--body)" },
-  addPkgBtnLg: { display: "flex", alignItems: "center", gap: 6, background: "var(--accent)", color: "#fff", border: "none", borderRadius: 9, padding: "8px 14px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "var(--body)" },
+  addPkgBtn: { display: "flex", alignItems: "center", gap: 5, background: "transparent", border: "none", color: "var(--navy)", fontSize: 12, fontWeight: 700, letterSpacing: ".04em", cursor: "pointer", fontFamily: "var(--body)" },
+  addPkgBtnLg: { display: "flex", alignItems: "center", gap: 6, background: "var(--navy)", color: "#fff", border: "none", borderRadius: 9, padding: "8px 14px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "var(--body)" },
   pkgBreakdown: { display: "flex", alignItems: "center", gap: 8, padding: "4px 12px 10px 40px", fontSize: 12, flexWrap: "wrap" },
-  pkgWinner: { fontWeight: 700, color: "var(--accent)", background: "var(--good-bg)", padding: "2px 8px", borderRadius: 6 },
+  pkgWinner: { fontWeight: 700, color: "var(--navy)", background: "var(--good-bg)", padding: "2px 8px", borderRadius: 6 },
   pkgDim: { color: "var(--ink-3)" },
   pkgVs: { color: "var(--ink-3)", fontSize: 11, fontStyle: "italic" },
   pkgArrow: { color: "var(--ink-3)", fontSize: 13 },
@@ -651,8 +651,8 @@ const S = {
   foot: { padding: "14px 20px", borderTop: "1px solid var(--line)", display: "flex", alignItems: "center", gap: 8 },
   delBtn: { display: "flex", alignItems: "center", gap: 5, background: "var(--bad-bg)", color: "var(--bad)", border: "none", borderRadius: 9, padding: "9px 13px", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "var(--body)" },
   backBtn: { display: "flex", alignItems: "center", gap: 5, background: "var(--card)", border: "1px solid var(--line)", color: "var(--ink-2)", borderRadius: 9, padding: "9px 14px", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "var(--body)" },
-  nextBtn: { display: "flex", alignItems: "center", gap: 5, background: "var(--accent)", color: "#fff", border: "none", borderRadius: 9, padding: "9px 16px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "var(--body)" },
-  saveBtn: { background: "var(--accent)", color: "#fff", border: "none", borderRadius: 9, padding: "9px 18px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "var(--body)" },
+  nextBtn: { display: "flex", alignItems: "center", gap: 5, background: "var(--navy)", color: "#fff", border: "none", borderRadius: 9, padding: "9px 16px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "var(--body)" },
+  saveBtn: { background: "var(--navy)", color: "#fff", border: "none", borderRadius: 9, padding: "9px 18px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "var(--body)" },
   dropdown: { position: "absolute", top: "100%", left: 0, right: 0, background: "var(--card)", border: "1px solid var(--line)", borderRadius: 10, marginTop: 4, maxHeight: 160, overflowY: "auto", zIndex: 10, boxShadow: "0 8px 24px rgba(0,0,0,.12)" },
   ddItem: { display: "flex", justifyContent: "space-between", width: "100%", padding: "10px 12px", border: "none", background: "transparent", cursor: "pointer", fontFamily: "var(--body)", fontSize: 13.5, textAlign: "left", borderBottom: "1px solid var(--line)" },
 };
