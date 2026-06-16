@@ -10,7 +10,7 @@ import OrderForm from "../components/OrderForm";
 import CustomerData from "../components/CustomerData";
 import { LOGO } from "../lib/logo";
 
-const STAGES = ["Package received in US","Sent from US","Received in SG","Sent to ID","Received in ID","Delivered to customer"];
+const STAGES = ["Package received in US","Sent from US","Received in SG","Sent from SG","Received in ID","Delivered to customer"];
 const PAYMENTS = ["Unpaid","Invoiced","Paid"];
 // Tracking legs: db field, carrier field, friendly label
 const LEGS = [
@@ -211,7 +211,7 @@ function Orders({ctx}){
           </span>
           {isOwner&&<span style={{flex:1,textAlign:"right",fontVariantNumeric:"tabular-nums"}}>{fmtShort(Number(o.sell_idr))}</span>}
           {isOwner&&<span style={{flex:.8,textAlign:"right"}}><span style={{...S.pill,background:mp>40?"var(--good-bg)":mp>20?"var(--warn-bg)":"var(--bad-bg)",color:mp>40?"var(--good)":mp>20?"var(--warn)":"var(--bad)"}}>{mp.toFixed(0)}%</span></span>}
-          {!isOwner&&<span style={{flex:1,fontSize:13,color:"var(--ink-2)"}}>{s?.eta_id}</span>}
+          {!isOwner&&<span style={{flex:1,fontSize:13,color:"var(--ink-2)"}}>{s?.eta_id ? new Date(s.eta_id).toLocaleDateString("en-GB") : "—"}</span>}
           <span style={{flex:"0 0 44px",display:"flex",justifyContent:"flex-end",gap:4}}>
             <button style={S.iconMini} title="Edit" onClick={()=>openEdit(o)}><Pencil size={14}/></button>
           </span>
@@ -256,7 +256,7 @@ function Shipments({ctx}){
   // unpaid-but-delivered = money owed
   const owed=activeShipments.filter(s=>s.stage==="Delivered to customer"&&s.payment!=="Paid").length;
 
-  const stageShortLabels=["In US","Sent from US","In SG","Sent to ID","In ID","Delivered"];
+  const stageShortLabels=["In US","Sent from US","In SG","Sent from SG","In ID","Delivered"];
 
   return(<>
     <div style={S.sectionLead}><h2 style={S.h2}>Shipments</h2>
@@ -303,7 +303,7 @@ function Shipments({ctx}){
                 </div>
               </div>
               <div style={{textAlign:"right",fontSize:12,color:"var(--ink-3)"}}>
-                <div>ETA ID: {s.eta_id??"—"}</div>
+                <div>ETA: {s.eta_id ? new Date(s.eta_id).toLocaleDateString("en-GB") : "—"}</div>
                 <div>Stage updated {fmtDate(s.stage_updated_at)}</div>
               </div>
             </div>

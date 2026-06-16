@@ -1,7 +1,7 @@
 import { useState, useMemo, useRef, useEffect } from "react";
 import { X, Trash2, Plus, ArrowRight, ArrowLeft, Check, Package } from "lucide-react";
 import { chargeable, finalizeCharged, fmtIDR, IN_TO_CM, LB_TO_KG } from "../lib/pricing";
-import { addOrder, updateOrder, cascadeDeleteOrder, nextOrderId, addShipmentSafe, nextShipmentId, addCustomer, updateCustomer } from "../lib/data";
+import { addOrder, updateOrder, cascadeDeleteOrder, nextOrderId, addShipmentSafe, nextShipmentId, addCustomer, updateCustomer, updateShipment } from "../lib/data";
 import ConfirmDialog from "./ConfirmDialog";
 
 const US_SG_OPTIONS = ["Airfreight", "FedEx Priority", "FedEx Economy", "FedEx Freight", "Seafreight"];
@@ -57,7 +57,7 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
     shipment_mode: order ? "existing" : "new",
     shipment_id: order?.shipment_id ?? (D.shipments[0]?.id ?? ""),
     new_courier: D.couriers[0]?.id ?? "",
-    new_eta: "",
+    new_eta: (() => { const s = D.shipments.find(s => s.id === order?.shipment_id); return s?.eta_id ?? ""; })(),
     order_date: order?.order_date ?? new Date().toISOString().slice(0, 10),
   }));
   const [busy, setBusy] = useState(false);
@@ -130,6 +130,9 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
         const { id, error } = await addShipmentSafe({ id: startId, courier_id: courierId, stage: "Package received in US", eta_id: f.new_eta || null }, D.shipments);
         if (error) throw error;
         shipmentId = id;
+      } else if (f.new_eta && f.shipment_id) {
+        // Update ETA on existing shipment when editing
+        await updateShipment(f.shipment_id, { eta_id: f.new_eta });
       }
 
       // sell_idr is no longer computed here — conversion happens in the Invoice tab.
