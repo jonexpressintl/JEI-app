@@ -119,10 +119,10 @@ export default function Dashboard() {
   const TABS = [
     {k:"orders",label:"Orders",icon:LayoutGrid},
     {k:"shipments",label:"Shipments",icon:Boxes},
-    {k:"customers",label:"Customers",icon:Users},
-    {k:"pricing",label:"Pricing",icon:Tag},
     {k:"invoices",label:"Invoices",icon:FileText},
     {k:"completed",label:"Completed",icon:CheckCircle2},
+    {k:"customers",label:"Customers",icon:Users},
+    {k:"pricing",label:"Pricing",icon:Tag},
     ...(isOwner ? [{k:"finance",label:"Finance",icon:TrendingUp}] : []),
   ];
 
@@ -755,7 +755,13 @@ function Completed({ctx}){
     <section style={S.kpis}>
       <Kpi label="Total completed" value={completed.length} sub="all time"/>
       <Kpi label="Showing" value={filtered.length} sub="after filters"/>
-      <Kpi label="Total revenue" value={"Rp "+Math.round(completed.reduce((a,o)=>a+(+o.sell_idr||0),0)/1e6)+"jt"} sub="from completed"/>
+      <Kpi label="Total revenue" value={"Rp "+Math.round(completed.reduce((a,o)=>{
+        const fxU=+o.invoice_usd_rate||ctx.liveFx?.usd_idr||15850;
+        const fxS=+o.invoice_sgd_rate||ctx.liveFx?.sgd_idr||11900;
+        const toI=(amt,cur)=>cur==="USD"?(+amt||0)*fxU:cur==="SGD"?(+amt||0)*fxS:(+amt||0);
+        const total=+o.sell_idr||quote(o).feeLines.reduce((s,l)=>s+toI(l.amount,l.currency),0);
+        return a+total;
+      },0)/1e6)+"jt"} sub="from completed"/>
     </section>
 
     {/* Filters */}

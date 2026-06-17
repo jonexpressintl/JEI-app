@@ -345,10 +345,6 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
                     <span style={S.pkgDim}>Actual: {isImperial ? `${(+p.weight).toFixed(2)} lb → ` : ""}{mp.weight.toFixed(2)} kg</span>
                     <span style={S.pkgVs}>|</span>
                     <span style={S.pkgDim}>Vol: {ch.vol.toFixed(2)} kg</span>
-                    <span style={S.pkgArrow}>→</span>
-                    <span style={{...S.pkgCharged, color: ch.basis === "actual" ? "var(--ink)" : "var(--navy)"}}>
-                      Greater-of: {ch.raw.toFixed(2)} kg ({ch.basis})
-                    </span>
                   </div>
                 </div>
               );
@@ -358,12 +354,10 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
               <div style={S.pkgTotalRow}>
                 <span>Total actual: <b>{totalActualKg.toFixed(2)} kg</b></span>
                 <span>Total vol: <b>{totalVolKg.toFixed(2)} kg</b></span>
-                <span>Sum of greater-of: <b>{totalRaw.toFixed(2)} kg</b></span>
               </div>
               <div style={{...S.pkgTotalRow, alignItems:"center", borderTop:"1px solid var(--line)", paddingTop:8, marginTop:4}}>
                 <span style={{fontSize:12.5,color:"var(--ink-3)"}}>
-                  {totalRaw < 3 ? "↑ 3 kg min applied" : `↑ rounded to 0.5 kg`}
-                  {" · "}÷{div}
+                  {totalRaw < 3 ? "3 kg minimum applied" : `÷${div} · rounded ↑ 0.5 kg`}
                 </span>
                 <label style={{display:"flex",alignItems:"center",gap:8}}>
                   <span style={{fontSize:12,fontWeight:600,color:"var(--ink-3)"}}>Override:</span>
@@ -471,7 +465,7 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
                   <div style={S.totalBar}>
                     <span>Air total: {fmtFee((+f.fee_1||0)*airKg,f.fee_1_cur)}</span>
                     <span>+ Sea: {fmtFee(+f.fee_2,f.fee_2_cur)}/kg × {seaKg.toFixed(1)} kg = {fmtFee(seaPerKgTotal,f.fee_2_cur)}</span>
-                    {f.order_extra_fees.map((ef,i)=><span key={i}>+ {ef.qty>1?`${ef.qty}× `:""}{ef.qty>1?`${ef.qty}× `:""}{ef.label||"Extra"}: {fmtFee((+ef.amount||0)*(+ef.qty||1),ef.currency)}</span>)}
+                    {f.order_extra_fees.map((ef,i)=><span key={i}>+ {ef.qty>1?`${ef.qty}× `:""}{ef.label||"Extra"}: {fmtFee((+ef.amount||0)*(+ef.qty||1),ef.currency)}</span>)}
                   </div>
                 </>)}
               </>)}
@@ -617,20 +611,29 @@ function ExtraFees({ fees, onAdd, onChange, onRemove, fmtFee, S }) {
         <div style={{ fontSize: 12.5, color: "var(--ink-3)", padding: "6px 0" }}>No additional costs yet.</div>
       )}
       {fees.map((ef, i) => (
-        <div key={i} style={{ display: "flex", gap: 6, marginBottom: 6, alignItems: "center" }}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 2, width: 56, flexShrink: 0 }}>
-            <span style={{ fontSize: 10.5, color: "var(--ink-3)", fontWeight: 600 }}>QTY</span>
+        <div key={i} style={{ display: "flex", gap: 6, marginBottom: 6, alignItems: "flex-end" }}>
+          <div style={{ flexShrink: 0, width: 56 }}>
+            {i === 0 && <div style={{ fontSize: 10.5, color: "var(--ink-3)", fontWeight: 600, marginBottom: 3 }}>QTY</div>}
             <input style={{ ...S.input, width: 56, textAlign: "center", padding: "7px 4px" }} type="number" min="1" placeholder="1"
               value={ef.qty ?? 1} onChange={e => onChange(i, "qty", +e.target.value || 1)} />
           </div>
-          <input style={{ ...S.input, flex: 2 }} placeholder="Description (e.g. Repackage, Handling...)"
-            value={ef.label} onChange={e => onChange(i, "label", e.target.value)} />
-          <input style={{ ...S.input, width: 90, textAlign: "right" }} type="number" placeholder="0"
-            value={ef.amount} onChange={e => onChange(i, "amount", e.target.value)} />
-          <select style={{ ...S.input, width: 65 }} value={ef.currency} onChange={e => onChange(i, "currency", e.target.value)}>
-            <option value="USD">USD</option><option value="SGD">SGD</option><option value="IDR">IDR</option>
-          </select>
-          <button style={{ background: "transparent", border: "none", color: "var(--bad)", cursor: "pointer", padding: 4 }} onClick={() => onRemove(i)}><Trash2 size={14} /></button>
+          <div style={{ flex: 2 }}>
+            {i === 0 && <div style={{ fontSize: 10.5, color: "var(--ink-3)", fontWeight: 600, marginBottom: 3 }}>DESCRIPTION</div>}
+            <input style={{ ...S.input, width: "100%" }} placeholder="e.g. Repackage, Handling, Clearance..."
+              value={ef.label} onChange={e => onChange(i, "label", e.target.value)} />
+          </div>
+          <div style={{ width: 90 }}>
+            {i === 0 && <div style={{ fontSize: 10.5, color: "var(--ink-3)", fontWeight: 600, marginBottom: 3 }}>UNIT PRICE</div>}
+            <input style={{ ...S.input, width: 90, textAlign: "right" }} type="number" placeholder="0"
+              value={ef.amount} onChange={e => onChange(i, "amount", e.target.value)} />
+          </div>
+          <div style={{ width: 65 }}>
+            {i === 0 && <div style={{ fontSize: 10.5, color: "var(--ink-3)", fontWeight: 600, marginBottom: 3 }}>CUR</div>}
+            <select style={{ ...S.input, width: 65 }} value={ef.currency} onChange={e => onChange(i, "currency", e.target.value)}>
+              <option value="USD">USD</option><option value="SGD">SGD</option><option value="IDR">IDR</option>
+            </select>
+          </div>
+          <button style={{ background: "transparent", border: "none", color: "var(--bad)", cursor: "pointer", padding: "7px 4px", flexShrink: 0 }} onClick={() => onRemove(i)}><Trash2 size={14} /></button>
         </div>
       ))}
     </div>
