@@ -112,6 +112,7 @@ export default function Dashboard() {
     {k:"customers",label:"Customers",icon:Users},
     {k:"pricing",label:"Pricing",icon:Tag},
     {k:"invoices",label:"Invoices",icon:FileText},
+    {k:"completed",label:"Completed",icon:CheckCircle2},
     ...(isOwner ? [{k:"finance",label:"Finance",icon:TrendingUp}] : []),
   ];
 
@@ -150,6 +151,7 @@ export default function Dashboard() {
       {tab==="customers"&& <div style={S.main}><CustomerData ctx={ctx}/></div>}
       {tab==="pricing"  && <div style={S.main}><Pricing ctx={ctx} reload={D.reload}/></div>}
       {tab==="invoices" && <div style={S.main}><Invoices ctx={ctx}/></div>}
+      {tab==="completed" && <div style={S.main}><Completed ctx={ctx}/></div>}
       {tab==="finance" && isOwner && <div style={S.main}><Finance ctx={ctx}/></div>}
 
       <footer style={S.footer}>
@@ -698,6 +700,98 @@ function InvoiceDoc({ctx,order,onComplete,reload}){
           {!order.completed && onComplete && <button style={{...S.printBtn,background:"var(--good)",color:"#fff"}} onClick={()=>onComplete(order.id)}><Check size={13}/> Complete</button>}
         </div></div>
     </div>);
+}
+
+// ──────────── COMPLETED ────────────
+function Completed({ctx}){
+  const {D,custName,shipmentOf,courierOf}=ctx;
+  const [q,setQ]=useState("");
+  const [dateFrom,setDateFrom]=useState("");
+  const [dateTo,setDateTo]=useState("");
+  const [sortDir,setSortDir]=useState("desc");
+
+  const completed=D.orders.filter(o=>o.completed);
+
+  const filtered=completed
+    .filter(o=>{
+      const search=[o.id,custName(o.customer_id),o.product,o.shipment_id].join(" ").toLowerCase();
+      if(q && !search.includes(q.toLowerCase())) return false;
+      if(dateFrom && o.completed_at && o.completed_at < dateFrom) return false;
+      if(dateTo && o.completed_at && o.completed_at > dateTo+"T23:59:59") return false;
+      return true;
+    })
+    .sort((a,b)=>{
+      const da=a.completed_at||a.order_date||"";
+      const db=b.completed_at||b.order_date||"";
+      return sortDir==="desc"?db.localeCompare(da):da.localeCompare(db);
+    });
+
+  return(<>
+    <div style={S.sectionLead}>
+      <h2 style={S.h2}>Completed</h2>
+      <p style={S.lead}>Archived orders that have been invoiced and settled. Sorted by completion date.</p>
+    </div>
+
+    <section style={S.kpis}>
+      <Kpi label="Total completed" value={completed.length} sub="all time"/>
+      <Kpi label="Showing" value={filtered.length} sub="after filters"/>
+      <Kpi label="Total revenue" value={"Rp "+Math.round(completed.reduce((a,o)=>a+(+o.sell_idr||0),0)/1e6)+"jt"} sub="from completed"/>
+    </section>
+
+    {/* Filters */}
+    <div style={{background:"var(--card)",border:"1px solid var(--line)",borderRadius:12,padding:"14px 16px",marginBottom:16,display:"flex",flexWrap:"wrap",gap:10,alignItems:"flex-end"}}>
+      <div style={{...S.searchWrap,flex:1,minWidth:180,marginBottom:0}}>
+        <Search size={15} style={{opacity:.5}}/><input style={S.search} placeholder="Search order, customer, product…" value={q} onChange={e=>setQ(e.target.value)}/>
+      </div>
+      <label style={{display:"flex",flexDirection:"column",gap:4,fontSize:12,color:"var(--ink-3)",fontWeight:600}}>
+        From<input type="date" style={{...S.input,width:140}} value={dateFrom} onChange={e=>setDateFrom(e.target.value)}/>
+      </label>
+      <label style={{display:"flex",flexDirection:"column",gap:4,fontSize:12,color:"var(--ink-3)",fontWeight:600}}>
+        To<input type="date" style={{...S.input,width:140}} value={dateTo} onChange={e=>setDateTo(e.target.value)}/>
+      </label>
+      <div style={{display:"flex",gap:6}}>
+        <button className={"seg "+(sortDir==="desc"?"on":"")} onClick={()=>setSortDir("desc")}>Newest first</button>
+        <button className={"seg "+(sortDir==="asc"?"on":"")} onClick={()=>setSortDir("asc")}>Oldest first</button>
+      </div>
+      {(q||dateFrom||dateTo)&&<button style={{...S.secBtn,padding:"7px 10px"}} onClick={()=>{setQ("");setDateFrom("");setDateTo("");}}>Clear filters</button>}
+    </div>
+
+    {filtered.length===0 && <div style={S.empty}>{completed.length===0?"No completed orders yet — complete an invoice to archive it here.":"No orders match your filters."}</div>}
+
+    <div style={{display:"flex",flexDirection:"column",gap:8}}>
+      {filtered.map(o=>{
+        const s=shipmentOf(o.shipment_id);
+        const c=courierOf(s?.courier_id);
+        const completedDate=o.completed_at?new Date(o.completed_at).toLocaleDateString("en-GB"):"—";
+        const orderDate=o.order_date?new Date(o.order_date).toLocaleDateString("en-GB"):"—";
+        return(
+          <div key={o.id} style={{background:"var(--card)",border:"1px solid var(--line)",borderRadius:12,padding:"12px 16px",display:"flex",flexWrap:"wrap",gap:10,alignItems:"center"}}>
+            <span style={{fontFamily:"var(--mono)",fontSize:12,color:"var(--ink-3)",flex:"0 0 80px"}}>{o.id}</span>
+            <div style={{flex:2,minWidth:140}}>
+              <div style={{fontWeight:700,fontSize:14}}>{custName(o.customer_id)}</div>
+              <div style={{fontSize:12,color:"var(--ink-3)"}}>{o.product}</div>
+            </div>
+            <div style={{flex:1,minWidth:100}}>
+              <div style={{fontSize:11,color:"var(--ink-3)"}}>Shipment</div>
+              <div style={{fontSize:12.5,fontWeight:600}}>{o.shipment_id||"—"} {c?.name?`· ${c.name}`:""}</div>
+            </div>
+            <div style={{flex:1,minWidth:90}}>
+              <div style={{fontSize:11,color:"var(--ink-3)"}}>Order date</div>
+              <div style={{fontSize:12.5}}>{orderDate}</div>
+            </div>
+            <div style={{flex:1,minWidth:90}}>
+              <div style={{fontSize:11,color:"var(--ink-3)"}}>Completed</div>
+              <div style={{fontSize:12.5,fontWeight:600,color:"var(--good)"}}>{completedDate}</div>
+            </div>
+            <div style={{flex:0,textAlign:"right"}}>
+              <div style={{fontSize:11,color:"var(--ink-3)"}}>Revenue</div>
+              <div style={{fontFamily:"var(--display)",fontSize:15,fontWeight:800,color:"var(--navy)"}}>{fmtIDR(+o.sell_idr||0)}</div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  </>);
 }
 
 // ──────────── FINANCE (owner only) ────────────

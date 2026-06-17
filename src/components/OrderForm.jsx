@@ -47,6 +47,9 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
     cbm_sg_id: "",
     charged_override: order?.charged_override ?? "",
     divisor: order?.divisor ?? "",
+    order_extra_fees: order?.order_extra_fees ?? [],
+    air_weight_basis: order?.air_weight_basis ?? "charged",
+    sea_weight_basis: order?.sea_weight_basis ?? "charged",
     // Step 4: Additional notes
     aes_required: order?.aes_required ?? false,
     aes_details: order?.aes_details ?? "",
@@ -67,6 +70,11 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
   const set = (k) => (e) => setF({ ...f, [k]: typeof e === "string" ? e : e.target.value });
   const setV = (k, v) => setF({ ...f, [k]: v });
 
+  // Extra fee helpers (multi-line additional costs)
+  function addExtraFee() { setF({ ...f, order_extra_fees: [...f.order_extra_fees, { label: "", amount: 0, currency: "USD" }] }); }
+  function setExtraFee(i, k, v) { const fees = [...f.order_extra_fees]; fees[i] = { ...fees[i], [k]: v }; setF({ ...f, order_extra_fees: fees }); }
+  function removeExtraFee(i) { setF({ ...f, order_extra_fees: f.order_extra_fees.filter((_, j) => j !== i) }); }
+
   // Package helpers
   function setPkg(i, k, v) { const p = [...f.packages]; p[i] = { ...p[i], [k]: v }; setF({ ...f, packages: p }); }
   function addPkg() { setF({ ...f, packages: [...f.packages, { weight: 0, l: 0, w: 0, h: 0, unit: "metric" }] }); }
@@ -82,10 +90,23 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
   const div = +f.divisor || 5000;
   // Sum RAW chargeable (unrounded) across all packages, then round total once
   let totalRaw = 0;
-  metricPkgs.forEach(p => { totalRaw += chargeable({ l: p.l, w: p.w, h: p.h }, p.weight, div).raw; });
+  let totalActualKg = 0;
+  let totalVolKg = 0;
+  metricPkgs.forEach(p => {
+    const ch = chargeable({ l: p.l, w: p.w, h: p.h }, p.weight, div);
+    totalRaw += ch.raw; totalActualKg += p.weight; totalVolKg += ch.vol;
+  });
   const totalChargedAuto = finalizeCharged(totalRaw).charged;
-  // User can override the final charged kg (e.g. for discounted pricing)
   const totalCharged = +f.charged_override || totalChargedAuto;
+
+  // Per-leg weight for Air+Sea breakdown (user selects basis per leg)
+  const getKgByBasis = (basis) => {
+    if (basis === "actual") return finalizeCharged(totalActualKg).charged;
+    if (basis === "volumetric") return finalizeCharged(totalVolKg).charged;
+    return totalCharged; // 'charged' = default greater-of
+  };
+  const airKg = getKgByBasis(f.air_weight_basis);
+  const seaKg = getKgByBasis(f.sea_weight_basis);
 
   // Fee mode based on shipping combo
   const feeMode = isAir(f.shipping_us_sg) && isAir(f.shipping_sg_id) ? "air_air"
@@ -99,8 +120,15 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
   const cbmSgId = +f.cbm_sg_id || autoCBM;
 
   // Seafreight totals = rate/CBM × CBM
-  const sf1Total = (+f.fee_1 || 0) * cbmUsSg;  // fee_1 is rate per CBM
-  const sf2Total = (+f.fee_2 || 0) * cbmSgId;  // fee_2 is rate per CBM
+  const sf1Total = (+f.fee_1 || 0) * cbmUsSg;
+  const sf2Total = (+f.fee_2 || 0) * cbmSgId;
+
+  // Air per-kg totals for Air+Sea breakdown
+  const airTotal = (+f.fee_1 || 0) * airKg;
+  const seaPerKgTotal = (+f.fee_2 || 0) * seaKg;
+
+  // Extra fees total (summed for display; no conversion — that's invoice tab)
+  const extraFeesTotal = f.order_extra_fees.reduce((a, ef) => a + (+ef.amount || 0), 0);
 
   const fmtPrice = (n) => f.price_currency === "USD" ? `$${Number(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : f.price_currency === "SGD" ? `S$${Number(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : fmtIDR(n);
   const fmtFee = (n, cur) => cur === "USD" ? `$${Number(n||0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : cur === "SGD" ? `S$${Number(n||0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : fmtIDR(n||0);
@@ -154,6 +182,8 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
         fee_1: +f.fee_1, fee_clearance: +f.fee_clearance, fee_2: +f.fee_2, fee_additional: +f.fee_additional,
         fee_1_cur: f.fee_1_cur, fee_clearance_cur: f.fee_clearance_cur, fee_2_cur: f.fee_2_cur, fee_additional_cur: f.fee_additional_cur,
         air_sea_option: f.air_sea_option, cbm_us_sg: f.cbm_us_sg ? +f.cbm_us_sg : null, cbm_sg_id: f.cbm_sg_id ? +f.cbm_sg_id : null,
+        order_extra_fees: f.order_extra_fees,
+        air_weight_basis: f.air_weight_basis, sea_weight_basis: f.sea_weight_basis,
         aes_required: f.aes_required, aes_details: f.aes_details,
         pickup_required: f.pickup_required, pickup_details: f.pickup_details,
         additional_info: f.additional_info,
@@ -354,6 +384,9 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
               </div>
 
               {/* ── AIR + AIR: rate per kg + additional ── */}
+              {/* Reusable extra fees block */}
+              <ExtraFees fees={f.order_extra_fees} onAdd={addExtraFee} onChange={setExtraFee} onRemove={removeExtraFee} fmtFee={fmtFee} S={S}/>
+
               {feeMode === "air_air" && (<>
                 <div style={S.row2}>
                   <Field label="Rate per kg">
@@ -364,27 +397,18 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
                       </select>
                     </div>
                   </Field>
-                  <Field label="Additional cost">
-                    <div style={{ display: "flex", gap: 4 }}>
-                      <input style={{ ...S.input, flex: 1 }} type="number" value={f.fee_additional} onChange={set("fee_additional")} placeholder="0" />
-                      <select style={{ ...S.input, width: 65 }} value={f.fee_additional_cur} onChange={set("fee_additional_cur")}>
-                        <option value="USD">USD</option><option value="SGD">SGD</option><option value="IDR">IDR</option>
-                      </select>
-                    </div>
-                  </Field>
                 </div>
                 <div style={S.totalBar}>
                   <span>Weight: {fmtFee(weightPrice, f.price_currency)}</span>
-                  <span>+ Additional: {fmtFee(+f.fee_additional||0, f.fee_additional_cur)}</span>
+                  {f.order_extra_fees.map((ef,i)=><span key={i}>+ {ef.label||"Extra"}: {fmtFee(+ef.amount||0,ef.currency)}</span>)}
                 </div>
               </>)}
 
-              {/* ── AIR + SEA: dropdown for 2 options ── */}
               {feeMode === "air_sea" && (<>
                 <Field label="Pricing method">
                   <select style={S.input} value={f.air_sea_option} onChange={set("air_sea_option")}>
-                    <option value="weight">Price per weight + Additional cost</option>
-                    <option value="breakdown">Airfreight + Clearance + Seafreight + Additional</option>
+                    <option value="weight">Price per weight</option>
+                    <option value="breakdown">Airfreight per-kg + Seafreight</option>
                   </select>
                 </Field>
 
@@ -398,61 +422,52 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
                         </select>
                       </div>
                     </Field>
-                    <Field label="Additional cost">
-                      <div style={{ display: "flex", gap: 4 }}>
-                        <input style={{ ...S.input, flex: 1 }} type="number" value={f.fee_additional} onChange={set("fee_additional")} placeholder="0" />
-                        <select style={{ ...S.input, width: 65 }} value={f.fee_additional_cur} onChange={set("fee_additional_cur")}>
-                          <option value="USD">USD</option><option value="SGD">SGD</option><option value="IDR">IDR</option>
-                        </select>
-                      </div>
-                    </Field>
                   </div>
                   <div style={S.totalBar}>
                     <span>Weight: {fmtFee(weightPrice, f.price_currency)}</span>
-                    <span>+ Additional: {fmtFee(+f.fee_additional||0, f.fee_additional_cur)}</span>
+                    {f.order_extra_fees.map((ef,i)=><span key={i}>+ {ef.label||"Extra"}: {fmtFee(+ef.amount||0,ef.currency)}</span>)}
                   </div>
                 </>) : (<>
+                  {/* Air leg — rate per kg with weight basis selector */}
+                  <div style={S.feeSectionTitle}>Airfreight leg (USA→SIN)</div>
                   <div style={S.row2}>
-                    <Field label="Airfreight fee">
+                    <Field label="Rate per kg (air)">
                       <div style={{display:"flex",gap:4}}>
                         <input style={{...S.input,flex:1}} type="number" value={f.fee_1} onChange={set("fee_1")} placeholder="0"/>
                         <select style={{...S.input,width:65}} value={f.fee_1_cur} onChange={set("fee_1_cur")}><option value="USD">USD</option><option value="SGD">SGD</option><option value="IDR">IDR</option></select>
                       </div>
                     </Field>
-                    <Field label="Clearance fee">
-                      <div style={{display:"flex",gap:4}}>
-                        <input style={{...S.input,flex:1}} type="number" value={f.fee_clearance} onChange={set("fee_clearance")} placeholder="0"/>
-                        <select style={{...S.input,width:65}} value={f.fee_clearance_cur} onChange={set("fee_clearance_cur")}><option value="USD">USD</option><option value="SGD">SGD</option><option value="IDR">IDR</option></select>
-                      </div>
+                    <Field label="Weight basis (air)">
+                      <select style={S.input} value={f.air_weight_basis} onChange={set("air_weight_basis")}>
+                        <option value="charged">Greater-of ({totalCharged.toFixed(1)} kg)</option>
+                        <option value="volumetric">Volumetric ({finalizeCharged(totalVolKg).charged.toFixed(1)} kg)</option>
+                        <option value="actual">Actual ({finalizeCharged(totalActualKg).charged.toFixed(1)} kg)</option>
+                      </select>
                     </Field>
                   </div>
+                  <div style={S.totalBar}><span>Air: {fmtFee(+f.fee_1,f.fee_1_cur)}/kg × {airKg.toFixed(1)} kg = {fmtFee((+f.fee_1||0)*airKg,f.fee_1_cur)}</span></div>
+
+                  {/* Sea leg — rate per CBM */}
+                  <div style={{...S.feeSectionTitle,marginTop:10}}>Seafreight leg (SIN→JKT)</div>
                   <div style={S.row2}>
-                    <Field label="Seafreight rate/CBM (SIN→JKT)">
+                    <Field label="SF rate/CBM (SIN→JKT)">
                       <div style={{display:"flex",gap:4}}>
                         <input style={{...S.input,flex:1}} type="number" value={f.fee_2} onChange={set("fee_2")} placeholder="0"/>
                         <select style={{...S.input,width:65}} value={f.fee_2_cur} onChange={set("fee_2_cur")}><option value="USD">USD</option><option value="SGD">SGD</option><option value="IDR">IDR</option></select>
                       </div>
                     </Field>
-                    <Field label="Additional cost">
-                      <div style={{display:"flex",gap:4}}>
-                        <input style={{...S.input,flex:1}} type="number" value={f.fee_additional} onChange={set("fee_additional")} placeholder="0"/>
-                        <select style={{...S.input,width:65}} value={f.fee_additional_cur} onChange={set("fee_additional_cur")}><option value="USD">USD</option><option value="SGD">SGD</option><option value="IDR">IDR</option></select>
-                      </div>
+                    <Field label={`CBM SIN→JKT (auto: ${autoCBM.toFixed(3)})`}>
+                      <input style={S.input} type="number" value={f.cbm_sg_id} onChange={set("cbm_sg_id")} placeholder={autoCBM.toFixed(3)}/>
                     </Field>
                   </div>
-                  <Field label={`CBM SIN→JKT (auto: ${autoCBM.toFixed(3)})`}>
-                    <input style={{...S.input,maxWidth:200}} type="number" value={f.cbm_sg_id} onChange={set("cbm_sg_id")} placeholder={autoCBM.toFixed(3)}/>
-                  </Field>
                   <div style={S.totalBar}>
-                    <span>Air: {fmtFee(+f.fee_1,f.fee_1_cur)}</span>
-                    <span>+ Clear: {fmtFee(+f.fee_clearance,f.fee_clearance_cur)}</span>
-                    <span>+ Sea: {fmtFee(+f.fee_2,f.fee_2_cur)}/CBM × {cbmSgId.toFixed(2)} = {fmtFee(sf2Total,f.fee_2_cur)}</span>
-                    <span>+ Add: {fmtFee(+f.fee_additional,f.fee_additional_cur)}</span>
+                    <span>Air total: {fmtFee((+f.fee_1||0)*airKg,f.fee_1_cur)}</span>
+                    <span>+ SF: {fmtFee(+f.fee_2,f.fee_2_cur)}/CBM × {cbmSgId.toFixed(2)} = {fmtFee(sf2Total,f.fee_2_cur)}</span>
+                    {f.order_extra_fees.map((ef,i)=><span key={i}>+ {ef.label||"Extra"}: {fmtFee(+ef.amount||0,ef.currency)}</span>)}
                   </div>
                 </>)}
               </>)}
 
-              {/* ── SEA + SEA: per-fee currency + dual CBM + manual FX ── */}
               {feeMode === "sea_sea" && (<>
                 <div style={S.row2}>
                   <Field label="SF1 rate/CBM (USA→SIN)">
@@ -461,24 +476,10 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
                       <select style={{...S.input,width:65}} value={f.fee_1_cur} onChange={set("fee_1_cur")}><option value="USD">USD</option><option value="SGD">SGD</option><option value="IDR">IDR</option></select>
                     </div>
                   </Field>
-                  <Field label="Clearance fee">
-                    <div style={{display:"flex",gap:4}}>
-                      <input style={{...S.input,flex:1}} type="number" value={f.fee_clearance} onChange={set("fee_clearance")} placeholder="0"/>
-                      <select style={{...S.input,width:65}} value={f.fee_clearance_cur} onChange={set("fee_clearance_cur")}><option value="USD">USD</option><option value="SGD">SGD</option><option value="IDR">IDR</option></select>
-                    </div>
-                  </Field>
-                </div>
-                <div style={S.row2}>
                   <Field label="SF2 rate/CBM (SIN→JKT)">
                     <div style={{display:"flex",gap:4}}>
                       <input style={{...S.input,flex:1}} type="number" value={f.fee_2} onChange={set("fee_2")} placeholder="0"/>
                       <select style={{...S.input,width:65}} value={f.fee_2_cur} onChange={set("fee_2_cur")}><option value="USD">USD</option><option value="SGD">SGD</option><option value="IDR">IDR</option></select>
-                    </div>
-                  </Field>
-                  <Field label="Additional cost">
-                    <div style={{display:"flex",gap:4}}>
-                      <input style={{...S.input,flex:1}} type="number" value={f.fee_additional} onChange={set("fee_additional")} placeholder="0"/>
-                      <select style={{...S.input,width:65}} value={f.fee_additional_cur} onChange={set("fee_additional_cur")}><option value="USD">USD</option><option value="SGD">SGD</option><option value="IDR">IDR</option></select>
                     </div>
                   </Field>
                 </div>
@@ -492,9 +493,8 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
                 </div>
                 <div style={S.totalBar}>
                   <span>SF1: {fmtFee(+f.fee_1,f.fee_1_cur)}/CBM × {cbmUsSg.toFixed(2)} = {fmtFee(sf1Total,f.fee_1_cur)}</span>
-                  <span>+ Clear: {fmtFee(+f.fee_clearance,f.fee_clearance_cur)}</span>
                   <span>+ SF2: {fmtFee(+f.fee_2,f.fee_2_cur)}/CBM × {cbmSgId.toFixed(2)} = {fmtFee(sf2Total,f.fee_2_cur)}</span>
-                  <span>+ Add: {fmtFee(+f.fee_additional,f.fee_additional_cur)}</span>
+                  {f.order_extra_fees.map((ef,i)=><span key={i}>+ {ef.label||"Extra"}: {fmtFee(+ef.amount||0,ef.currency)}</span>)}
                 </div>
               </>)}
             </div>
@@ -593,6 +593,31 @@ function CustAutocomplete({ customers, value, selectedId, onChange }) {
           {matches.length === 0 && <div style={{ padding: "10px 12px", fontSize: 13, color: "var(--ink-3)" }}>No matches</div>}
         </div>
       )}
+    </div>
+  );
+}
+
+// ── Reusable multi-line extra fees block ──
+function ExtraFees({ fees, onAdd, onChange, onRemove, fmtFee, S }) {
+  return (
+    <div style={{ marginBottom: 12 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+        <span style={{ fontSize: 12, fontWeight: 700, color: "var(--ink-3)", letterSpacing: ".04em" }}>ADDITIONAL COSTS</span>
+        <button style={S.addPkgBtn} onClick={onAdd}><Plus size={12} /> Add cost</button>
+      </div>
+      {fees.length === 0 && (
+        <div style={{ fontSize: 12.5, color: "var(--ink-3)", padding: "8px 0" }}>No additional costs. Click "Add cost" to add one.</div>
+      )}
+      {fees.map((ef, i) => (
+        <div key={i} style={{ display: "flex", gap: 6, marginBottom: 6, alignItems: "center" }}>
+          <input style={{ ...S.input, flex: 2 }} placeholder="Description (e.g. Clearance fee, Handling...)" value={ef.label} onChange={e => onChange(i, "label", e.target.value)} />
+          <input style={{ ...S.input, width: 90, textAlign: "right" }} type="number" placeholder="0" value={ef.amount} onChange={e => onChange(i, "amount", e.target.value)} />
+          <select style={{ ...S.input, width: 65 }} value={ef.currency} onChange={e => onChange(i, "currency", e.target.value)}>
+            <option value="USD">USD</option><option value="SGD">SGD</option><option value="IDR">IDR</option>
+          </select>
+          <button style={{ background: "transparent", border: "none", color: "var(--bad)", cursor: "pointer", padding: 4 }} onClick={() => onRemove(i)}><Trash2 size={14} /></button>
+        </div>
+      ))}
     </div>
   );
 }

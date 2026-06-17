@@ -141,4 +141,4 @@ export const setShipmentTracking = (id, patch) =>
 
 // Mark an order as completed (archives it from active views)
 export const completeOrder = (id) =>
-  supabase.from("orders").update({ completed: true }).eq("id", id);
+  supabase.from("orders").update({ completed: true, completed_at: new Date().toISOString() }).eq("id", id);
