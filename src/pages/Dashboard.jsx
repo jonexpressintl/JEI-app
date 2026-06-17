@@ -1,7 +1,7 @@
 import { useState, useMemo, useRef, useEffect } from "react";
 import { Package, Ship, Truck, Eye, EyeOff, Search, ChevronRight, AlertCircle, CheckCircle2, FileText, Calculator, Tag, LayoutGrid, Plus, Printer, LogOut, RefreshCw, Pencil, Boxes, Circle, CreditCard, ExternalLink, Copy, Check, Download, Upload, Users, DollarSign, TrendingUp, Trash2 } from "lucide-react";
 import { useAuth } from "../lib/auth";
-import { useJEIData, updateCustomerRate, addCustomer, setShipmentStage, setShipmentPayment, setShipmentTracking, completeOrder, updateOrder } from "../lib/data";
+import { useJEIData, updateCustomerRate, addCustomer, setShipmentStage, setShipmentPayment, setShipmentTracking, completeOrder, updateOrder, cascadeDeleteOrder } from "../lib/data";
 import { chargeable, finalizeCharged, fmtIDR, fmtShort, toIDR, trackingUrl, MIN_KG, IN_TO_CM, LB_TO_KG } from "../lib/pricing";
 import { generateInvoicePDF, generateQuotationPDF } from "../lib/pdf";
 import ConfirmDialog from "../components/ConfirmDialog";
@@ -84,9 +84,21 @@ export default function Dashboard() {
       feeLines.push({ label: `${o.product||"Shipment"} (${charged.toFixed(1)} kg × ${o.price_currency==="USD"?"$":o.price_currency==="SGD"?"S$":"Rp"}${rate.toLocaleString()})`, amount: weightPrice, currency: o.price_currency || "USD" });
       if (+o.fee_additional) feeLines.push({ label: "Additional cost", amount: +o.fee_additional, currency: o.fee_additional_cur || "USD" });
     } else if (feeMode === "air_sea") {
-      if (+o.fee_1) feeLines.push({ label: "Airfreight fee", amount: +o.fee_1, currency: o.fee_1_cur || "USD" });
+      // Air leg: rate/kg × air weight basis
+      const airBasis = o.air_weight_basis || "charged";
+      const seaBasis = o.sea_weight_basis || "charged";
+      const getKg = (basis) => {
+        if (basis === "actual") return finalizeCharged(totalActual).charged;
+        if (basis === "volumetric") return finalizeCharged(totalVol).charged;
+        return charged;
+      };
+      const airKgQ = getKg(airBasis);
+      const seaKgQ = getKg(seaBasis);
+      const airTotalQ = (+o.fee_1||0) * airKgQ;
+      const seaTotalQ = (+o.fee_2||0) * seaKgQ;
+      if (+o.fee_1) feeLines.push({ label: `Airfreight (${airKgQ.toFixed(1)} kg × ${o.fee_1_cur==="USD"?"$":o.fee_1_cur==="SGD"?"S$":"Rp"}${(+o.fee_1).toLocaleString()}, ${airBasis})`, amount: airTotalQ, currency: o.fee_1_cur || "USD" });
       if (+o.fee_clearance) feeLines.push({ label: "Clearance fee", amount: +o.fee_clearance, currency: o.fee_clearance_cur || "SGD" });
-      if (+o.fee_2) feeLines.push({ label: `Seafreight (${cbmB.toFixed(2)} CBM × ${(+o.fee_2).toLocaleString()})`, amount: sf2Total, currency: o.fee_2_cur || "IDR" });
+      if (+o.fee_2) feeLines.push({ label: `Seafreight (${seaKgQ.toFixed(1)} kg × ${o.fee_2_cur==="USD"?"$":o.fee_2_cur==="SGD"?"S$":"Rp"}${(+o.fee_2).toLocaleString()}, ${seaBasis})`, amount: seaTotalQ, currency: o.fee_2_cur || "IDR" });
       if (+o.fee_additional) feeLines.push({ label: "Additional cost", amount: +o.fee_additional, currency: o.fee_additional_cur || "USD" });
     } else { // sea_sea
       if (+o.fee_1) feeLines.push({ label: `Seafreight USA→SIN (${cbmA.toFixed(2)} CBM × ${(+o.fee_1).toLocaleString()})`, amount: sf1Total, currency: o.fee_1_cur || "USD" });
@@ -707,7 +719,12 @@ function InvoiceDoc({ctx,order,onComplete,reload}){
       <div style={S.invFoot}><span>Payment in IDR within 14 days · Bank transfer to JEI account</span>
         <div style={{display:"flex",gap:8}}>
           <button style={S.printBtn} onClick={downloadPDF}><Download size={13}/> Download PDF</button>
-          {!order.completed && onComplete && <button style={{...S.printBtn,background:"var(--good)",color:"#fff"}} onClick={()=>onComplete(order.id)}><Check size={13}/> Complete</button>}
+          {!order.completed && onComplete && <button style={{...S.printBtn,background:"var(--good)",color:"#fff"}} onClick={async()=>{
+            // Save current rates before completing so they're locked on the completed record
+            const patch={invoice_usd_rate:+usdRate||null,invoice_sgd_rate:+sgdRate||null,sell_idr:Math.round(grandTotalIDR)};
+            await updateOrder(order.id,patch);
+            onComplete(order.id);
+          }}><Check size={13}/> Complete</button>}
         </div></div>
     </div>);
 }
@@ -720,7 +737,8 @@ function Completed({ctx}){
   const [dateTo,setDateTo]=useState("");
   const [sortDir,setSortDir]=useState("desc");
   const [openId,setOpenId]=useState(null);
-  const [delId,setDelId]=useState(null);
+  const [delId,setDelId]=useState(null);   // revert to invoice
+  const [hardDelId,setHardDelId]=useState(null); // permanent delete
   const [busy,setBusy]=useState(false);
 
   const completed=D.orders.filter(o=>o.completed);
@@ -739,10 +757,20 @@ function Completed({ctx}){
       return sortDir==="desc"?db.localeCompare(da):da.localeCompare(db);
     });
 
-  async function doDelete(orderId){
+  // Revert to active invoice (keeps data)
+  async function doRevert(orderId){
     setBusy(true);
     await updateOrder(orderId,{completed:false,completed_at:null});
     setDelId(null); setOpenId(null);
+    reload(); setBusy(false);
+  }
+
+  // Permanent delete (removes all data)
+  async function doHardDelete(orderId){
+    setBusy(true);
+    const o=D.orders.find(x=>x.id===orderId);
+    await cascadeDeleteOrder(orderId, o?.shipment_id, D.orders);
+    setHardDelId(null); setOpenId(null);
     reload(); setBusy(false);
   }
 
@@ -878,10 +906,14 @@ function Completed({ctx}){
               </div>}
 
               {/* Action buttons */}
-              <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:4}}>
+              <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:4,flexWrap:"wrap"}}>
+                <button style={{...S.secBtn,color:"var(--warn)",borderColor:"var(--warn)"}}
+                  onClick={()=>setHardDelId(o.id)}>
+                  <Trash2 size={13}/> Delete permanently
+                </button>
                 <button style={{...S.secBtn,color:"var(--bad)",borderColor:"var(--bad)"}}
                   onClick={()=>setDelId(o.id)}>
-                  <Trash2 size={13}/> Remove from completed
+                  <RefreshCw size={13}/> Revert to invoice
                 </button>
                 <button style={S.printBtn} onClick={dlPDF}>
                   <Download size={13}/> Download PDF
@@ -893,10 +925,15 @@ function Completed({ctx}){
       })}
     </div>
 
-    {delId && <ConfirmDialog danger title="Remove from completed?"
-      message="This moves the order back to active Invoices. The order data is kept — nothing is deleted."
-      confirmLabel={busy?"Moving…":"Move to invoices"} busy={busy}
-      onConfirm={()=>doDelete(delId)} onCancel={()=>setDelId(null)}/>}
+    {delId && <ConfirmDialog title="Revert to invoice?"
+      message="This moves the order back to active Invoices. All data is kept — nothing is deleted."
+      confirmLabel={busy?"Moving…":"Revert to invoice"} busy={busy}
+      onConfirm={()=>doRevert(delId)} onCancel={()=>setDelId(null)}/>}
+
+    {hardDelId && <ConfirmDialog danger title="Permanently delete this order?"
+      message="This deletes all order data, fees, and the associated shipment (if it has no other orders). This cannot be undone."
+      confirmLabel={busy?"Deleting…":"Delete permanently"} busy={busy}
+      onConfirm={()=>doHardDelete(hardDelId)} onCancel={()=>setHardDelId(null)}/>}
   </>);
 }
 

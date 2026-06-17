@@ -101,8 +101,8 @@ export function generateInvoicePDF(order, customer, shipment, courier, liveFx) {
   const isAirM = (m) => m && m !== "Seafreight";
   const div = +order.divisor || 5000;
   const pkgs = order.packages?.length > 0 ? order.packages : [{ weight: +order.weight_kg, l: +order.dim_l_cm, w: +order.dim_w_cm, h: +order.dim_h_cm }];
-  let totalRaw = 0;
-  pkgs.forEach(p => { totalRaw += chargeable({ l: +p.l, w: +p.w, h: +p.h }, +p.weight, div).raw; });
+  let totalRaw = 0, totalActual = 0, totalVol = 0;
+  pkgs.forEach(p => { const ch = chargeable({ l: +p.l, w: +p.w, h: +p.h }, +p.weight, div); totalRaw += ch.raw; totalActual += +p.weight; totalVol += ch.vol; });
   const chargedAuto = finalizeCharged(totalRaw).charged;
   const charged = +order.charged_override || chargedAuto;
   const rate = +order.price_per_kg || customer?.rate_per_kg || 0;
@@ -115,15 +115,27 @@ export function generateInvoicePDF(order, customer, shipment, courier, liveFx) {
   const sf1Total = (+order.fee_1||0) * cbmA;
   const sf2Total = (+order.fee_2||0) * cbmB;
 
+  const getKgPdf = (basis) => {
+    if (basis === "actual") return finalizeCharged(totalActual).charged;
+    if (basis === "volumetric") return finalizeCharged(totalVol).charged;
+    return charged;
+  };
+
   let feeLines = [];
   const weightPrice = charged * rate;
   if (feeMode === "air_air" || (feeMode === "air_sea" && order.air_sea_option !== "breakdown")) {
     feeLines.push({ label: `Shipment ${shipment?.id || "—"} (${order.shipping_us_sg||"Air"} / ${order.shipping_sg_id||"Air"}, ${pkgs.length} pkg, ${charged.toFixed(1)}kg)`, amount: weightPrice, currency: order.price_currency || "USD" });
     if (+order.fee_additional) feeLines.push({ label: "Additional cost", amount: +order.fee_additional, currency: order.fee_additional_cur || "USD" });
   } else if (feeMode === "air_sea") {
-    if (+order.fee_1) feeLines.push({ label: "Airfreight fee", amount: +order.fee_1, currency: order.fee_1_cur || "USD" });
+    const airKgP = getKgPdf(order.air_weight_basis || "charged");
+    const seaKgP = getKgPdf(order.sea_weight_basis || "charged");
+    const airTotalP = (+order.fee_1||0) * airKgP;
+    const seaTotalP = (+order.fee_2||0) * seaKgP;
+    const cur1 = order.fee_1_cur||"USD"; const cur2 = order.fee_2_cur||"IDR";
+    const sym1 = cur1==="USD"?"$":cur1==="SGD"?"S$":"Rp"; const sym2 = cur2==="USD"?"$":cur2==="SGD"?"S$":"Rp";
+    if (+order.fee_1) feeLines.push({ label: `Airfreight (${airKgP.toFixed(1)} kg × ${sym1}${(+order.fee_1).toLocaleString()}, ${order.air_weight_basis||"charged"})`, amount: airTotalP, currency: cur1 });
     if (+order.fee_clearance) feeLines.push({ label: "Clearance fee", amount: +order.fee_clearance, currency: order.fee_clearance_cur || "SGD" });
-    if (+order.fee_2) feeLines.push({ label: `Seafreight (${cbmB.toFixed(2)} CBM)`, amount: sf2Total, currency: order.fee_2_cur || "IDR" });
+    if (+order.fee_2) feeLines.push({ label: `Seafreight (${seaKgP.toFixed(1)} kg × ${sym2}${(+order.fee_2).toLocaleString()}, ${order.sea_weight_basis||"charged"})`, amount: seaTotalP, currency: cur2 });
     if (+order.fee_additional) feeLines.push({ label: "Additional cost", amount: +order.fee_additional, currency: order.fee_additional_cur || "USD" });
   } else {
     if (+order.fee_1) feeLines.push({ label: `Seafreight USA->SIN (${cbmA.toFixed(2)} CBM)`, amount: sf1Total, currency: order.fee_1_cur || "USD" });

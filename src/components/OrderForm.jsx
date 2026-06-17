@@ -603,39 +603,42 @@ function CustAutocomplete({ customers, value, selectedId, onChange }) {
 function ExtraFees({ fees, onAdd, onChange, onRemove, fmtFee, S }) {
   return (
     <div style={{ marginBottom: 12 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
         <span style={{ fontSize: 12, fontWeight: 700, color: "var(--ink-3)", letterSpacing: ".04em" }}>ADDITIONAL COSTS</span>
         <button style={S.addPkgBtn} onClick={onAdd}><Plus size={12} /> Add cost</button>
       </div>
-      {fees.length === 0 && (
-        <div style={{ fontSize: 12.5, color: "var(--ink-3)", padding: "6px 0" }}>No additional costs yet.</div>
-      )}
-      {fees.map((ef, i) => (
-        <div key={i} style={{ display: "flex", gap: 6, marginBottom: 6, alignItems: "flex-end" }}>
-          <div style={{ flexShrink: 0, width: 56 }}>
-            {i === 0 && <div style={{ fontSize: 10.5, color: "var(--ink-3)", fontWeight: 600, marginBottom: 3 }}>QTY</div>}
-            <input style={{ ...S.input, width: 56, textAlign: "center", padding: "7px 4px" }} type="number" min="1" placeholder="1"
-              value={ef.qty ?? 1} onChange={e => onChange(i, "qty", +e.target.value || 1)} />
+      {fees.length === 0
+        ? <div style={{ fontSize: 12.5, color: "var(--ink-3)", padding: "4px 0" }}>No additional costs yet.</div>
+        : <>
+          {/* Fixed header — always shown when there are rows */}
+          <div style={{ display: "flex", gap: 6, marginBottom: 3 }}>
+            <div style={{ width: 56, flexShrink: 0, fontSize: 10.5, color: "var(--ink-3)", fontWeight: 700 }}>QTY</div>
+            <div style={{ flex: 2, fontSize: 10.5, color: "var(--ink-3)", fontWeight: 700 }}>DESCRIPTION</div>
+            <div style={{ width: 90, flexShrink: 0, fontSize: 10.5, color: "var(--ink-3)", fontWeight: 700, textAlign: "right" }}>UNIT PRICE</div>
+            <div style={{ width: 65, flexShrink: 0, fontSize: 10.5, color: "var(--ink-3)", fontWeight: 700 }}>CUR</div>
+            <div style={{ width: 26, flexShrink: 0 }} />
           </div>
-          <div style={{ flex: 2 }}>
-            {i === 0 && <div style={{ fontSize: 10.5, color: "var(--ink-3)", fontWeight: 600, marginBottom: 3 }}>DESCRIPTION</div>}
-            <input style={{ ...S.input, width: "100%" }} placeholder="e.g. Repackage, Handling, Clearance..."
-              value={ef.label} onChange={e => onChange(i, "label", e.target.value)} />
-          </div>
-          <div style={{ width: 90 }}>
-            {i === 0 && <div style={{ fontSize: 10.5, color: "var(--ink-3)", fontWeight: 600, marginBottom: 3 }}>UNIT PRICE</div>}
-            <input style={{ ...S.input, width: 90, textAlign: "right" }} type="number" placeholder="0"
-              value={ef.amount} onChange={e => onChange(i, "amount", e.target.value)} />
-          </div>
-          <div style={{ width: 65 }}>
-            {i === 0 && <div style={{ fontSize: 10.5, color: "var(--ink-3)", fontWeight: 600, marginBottom: 3 }}>CUR</div>}
-            <select style={{ ...S.input, width: 65 }} value={ef.currency} onChange={e => onChange(i, "currency", e.target.value)}>
-              <option value="USD">USD</option><option value="SGD">SGD</option><option value="IDR">IDR</option>
-            </select>
-          </div>
-          <button style={{ background: "transparent", border: "none", color: "var(--bad)", cursor: "pointer", padding: "7px 4px", flexShrink: 0 }} onClick={() => onRemove(i)}><Trash2 size={14} /></button>
-        </div>
-      ))}
+          {fees.map((ef, i) => (
+            <div key={i} style={{ display: "flex", gap: 6, marginBottom: 6, alignItems: "center" }}>
+              <input style={{ ...S.input, width: 56, flexShrink: 0, textAlign: "center", padding: "7px 4px" }}
+                type="number" min="1" placeholder="1"
+                value={ef.qty ?? 1} onChange={e => onChange(i, "qty", +e.target.value || 1)} />
+              <input style={{ ...S.input, flex: 2, minWidth: 0 }}
+                placeholder="e.g. Repackage, Handling..."
+                value={ef.label} onChange={e => onChange(i, "label", e.target.value)} />
+              <input style={{ ...S.input, width: 90, flexShrink: 0, textAlign: "right" }}
+                type="number" placeholder="0"
+                value={ef.amount} onChange={e => onChange(i, "amount", e.target.value)} />
+              <select style={{ ...S.input, width: 65, flexShrink: 0 }}
+                value={ef.currency} onChange={e => onChange(i, "currency", e.target.value)}>
+                <option value="USD">USD</option><option value="SGD">SGD</option><option value="IDR">IDR</option>
+              </select>
+              <button style={{ background: "transparent", border: "none", color: "var(--bad)", cursor: "pointer", padding: "4px", width: 26, flexShrink: 0 }}
+                onClick={() => onRemove(i)}><Trash2 size={14} /></button>
+            </div>
+          ))}
+        </>
+      }
     </div>
   );
 }
