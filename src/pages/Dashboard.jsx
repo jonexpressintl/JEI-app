@@ -4,6 +4,7 @@ import { useAuth } from "../lib/auth";
 import { useJEIData, updateCustomerRate, addCustomer, setShipmentStage, setShipmentPayment, setShipmentTracking, completeOrder, updateOrder } from "../lib/data";
 import { chargeable, finalizeCharged, fmtIDR, fmtShort, toIDR, trackingUrl, MIN_KG, IN_TO_CM, LB_TO_KG } from "../lib/pricing";
 import { generateInvoicePDF, generateQuotationPDF } from "../lib/pdf";
+import ConfirmDialog from "../components/ConfirmDialog";
 import { fetchLiveRates } from "../lib/fx";
 import { exportCSV, exportOrders } from "../lib/csv";
 import OrderForm from "../components/OrderForm";
@@ -93,8 +94,10 @@ export default function Dashboard() {
       if (+o.fee_2) feeLines.push({ label: `Seafreight SIN→JKT (${cbmB.toFixed(2)} CBM × ${(+o.fee_2).toLocaleString()})`, amount: sf2Total, currency: o.fee_2_cur || "IDR" });
       if (+o.fee_additional) feeLines.push({ label: "Additional cost", amount: +o.fee_additional, currency: o.fee_additional_cur || "USD" });
     }
-    // Extra costs added at invoice time
+    // Extra costs added at invoice time (invoice tab)
     (o.extra_costs||[]).forEach(ec => feeLines.push({ label: ec.label, amount: +ec.amount, currency: ec.currency || "IDR" }));
+    // Additional costs added at order time (order form)
+    (o.order_extra_fees||[]).forEach(ef => { if(ef.label||+ef.amount) feeLines.push({ label: ef.label||"Additional cost", amount: +ef.amount, currency: ef.currency || "USD" }); });
 
     return { vol: totalVol, charged, chargedAuto, basis, minApplied, rate, price: weightPrice, divisor: div, pkgCount: pkgs.length, feeLines, feeMode };
   };
@@ -704,11 +707,14 @@ function InvoiceDoc({ctx,order,onComplete,reload}){
 
 // ──────────── COMPLETED ────────────
 function Completed({ctx}){
-  const {D,custName,shipmentOf,courierOf}=ctx;
+  const {D,custName,shipmentOf,courierOf,quote,reload}=ctx;
   const [q,setQ]=useState("");
   const [dateFrom,setDateFrom]=useState("");
   const [dateTo,setDateTo]=useState("");
   const [sortDir,setSortDir]=useState("desc");
+  const [openId,setOpenId]=useState(null);
+  const [delId,setDelId]=useState(null);
+  const [busy,setBusy]=useState(false);
 
   const completed=D.orders.filter(o=>o.completed);
 
@@ -726,10 +732,17 @@ function Completed({ctx}){
       return sortDir==="desc"?db.localeCompare(da):da.localeCompare(db);
     });
 
+  async function doDelete(orderId){
+    setBusy(true);
+    await updateOrder(orderId,{completed:false,completed_at:null});
+    setDelId(null); setOpenId(null);
+    reload(); setBusy(false);
+  }
+
   return(<>
     <div style={S.sectionLead}>
       <h2 style={S.h2}>Completed</h2>
-      <p style={S.lead}>Archived orders that have been invoiced and settled. Sorted by completion date.</p>
+      <p style={S.lead}>Archived orders that have been invoiced and settled. Click any row to expand full details.</p>
     </div>
 
     <section style={S.kpis}>
@@ -762,35 +775,111 @@ function Completed({ctx}){
       {filtered.map(o=>{
         const s=shipmentOf(o.shipment_id);
         const c=courierOf(s?.courier_id);
+        const customer=D.customers.find(cu=>cu.id===o.customer_id);
+        const q2=quote(o);
         const completedDate=o.completed_at?new Date(o.completed_at).toLocaleDateString("en-GB"):"—";
         const orderDate=o.order_date?new Date(o.order_date).toLocaleDateString("en-GB"):"—";
+        const isOpen=openId===o.id;
+        const invNo="INV-"+o.id.replace("ORD-","");
+
+        function dlPDF(){
+          const doc=generateInvoicePDF(o,customer,s,c,ctx.liveFx);
+          doc.save(`${invNo}.pdf`);
+        }
+
         return(
-          <div key={o.id} style={{background:"var(--card)",border:"1px solid var(--line)",borderRadius:12,padding:"12px 16px",display:"flex",flexWrap:"wrap",gap:10,alignItems:"center"}}>
-            <span style={{fontFamily:"var(--mono)",fontSize:12,color:"var(--ink-3)",flex:"0 0 80px"}}>{o.id}</span>
-            <div style={{flex:2,minWidth:140}}>
-              <div style={{fontWeight:700,fontSize:14}}>{custName(o.customer_id)}</div>
-              <div style={{fontSize:12,color:"var(--ink-3)"}}>{o.product}</div>
-            </div>
-            <div style={{flex:1,minWidth:100}}>
-              <div style={{fontSize:11,color:"var(--ink-3)"}}>Shipment</div>
-              <div style={{fontSize:12.5,fontWeight:600}}>{o.shipment_id||"—"} {c?.name?`· ${c.name}`:""}</div>
-            </div>
-            <div style={{flex:1,minWidth:90}}>
-              <div style={{fontSize:11,color:"var(--ink-3)"}}>Order date</div>
-              <div style={{fontSize:12.5}}>{orderDate}</div>
-            </div>
-            <div style={{flex:1,minWidth:90}}>
-              <div style={{fontSize:11,color:"var(--ink-3)"}}>Completed</div>
-              <div style={{fontSize:12.5,fontWeight:600,color:"var(--good)"}}>{completedDate}</div>
-            </div>
-            <div style={{flex:0,textAlign:"right"}}>
-              <div style={{fontSize:11,color:"var(--ink-3)"}}>Revenue</div>
-              <div style={{fontFamily:"var(--display)",fontSize:15,fontWeight:800,color:"var(--navy)"}}>{fmtIDR(+o.sell_idr||0)}</div>
-            </div>
+          <div key={o.id} style={{background:"var(--card)",border:"1px solid var(--line)",borderRadius:12,overflow:"hidden",transition:".15s"}}>
+            {/* Summary row — click to expand */}
+            <button onClick={()=>setOpenId(isOpen?null:o.id)}
+              style={{width:"100%",display:"flex",flexWrap:"wrap",gap:10,alignItems:"center",padding:"12px 16px",background:"transparent",border:"none",cursor:"pointer",fontFamily:"var(--body)",textAlign:"left"}}>
+              <span style={{fontFamily:"var(--mono)",fontSize:12,color:"var(--ink-3)",flex:"0 0 80px"}}>{o.id}</span>
+              <div style={{flex:2,minWidth:140}}>
+                <div style={{fontWeight:700,fontSize:14,color:"var(--ink)"}}>{custName(o.customer_id)}</div>
+                <div style={{fontSize:12,color:"var(--ink-3)"}}>{o.product}</div>
+              </div>
+              <div style={{flex:1,minWidth:90,textAlign:"left"}}>
+                <div style={{fontSize:11,color:"var(--ink-3)"}}>Shipment</div>
+                <div style={{fontSize:12.5,fontWeight:600,color:"var(--ink)"}}>{o.shipment_id||"—"}{c?.name?` · ${c.name}`:""}</div>
+              </div>
+              <div style={{flex:1,minWidth:80,textAlign:"left"}}>
+                <div style={{fontSize:11,color:"var(--ink-3)"}}>Order date</div>
+                <div style={{fontSize:12.5,color:"var(--ink)"}}>{orderDate}</div>
+              </div>
+              <div style={{flex:1,minWidth:80,textAlign:"left"}}>
+                <div style={{fontSize:11,color:"var(--ink-3)"}}>Completed</div>
+                <div style={{fontSize:12.5,fontWeight:600,color:"var(--good)"}}>{completedDate}</div>
+              </div>
+              <div style={{flex:0,textAlign:"right"}}>
+                <div style={{fontFamily:"var(--display)",fontSize:15,fontWeight:800,color:"var(--navy)"}}>{fmtIDR(+o.sell_idr||0)}</div>
+              </div>
+              <ChevronRight size={16} style={{color:"var(--ink-3)",transform:isOpen?"rotate(90deg)":"none",transition:".15s",flexShrink:0}}/>
+            </button>
+
+            {/* Expanded detail */}
+            {isOpen && <div style={{borderTop:"1px solid var(--line)",padding:"16px"}}>
+              {/* Order details grid */}
+              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:10,marginBottom:16}}>
+                {[
+                  ["Invoice No", invNo],
+                  ["Customer type", o.customer_type||"—"],
+                  ["Supplier (US sender)", o.supplier_name||"—"],
+                  ["Destination", o.destination||"Indonesia"],
+                  ["Route (US→SIN)", o.shipping_us_sg||"—"],
+                  ["Route (SIN→JKT)", o.shipping_sg_id||"—"],
+                  ["Qty", o.qty||"—"],
+                  ["Divisor", o.divisor?`÷${o.divisor}`:"—"],
+                  ["Charged weight", `${q2.charged.toFixed(1)} kg`],
+                  ["Contact person", o.contact_person||customer?.contact_person||"—"],
+                  ["AES required", o.aes_required?"Yes":"No"],
+                  ["Pickup required", o.pickup_required?"Yes":"No"],
+                ].map(([label,val])=>(
+                  <div key={label} style={{background:"var(--head)",borderRadius:9,padding:"8px 12px"}}>
+                    <div style={{fontSize:10.5,color:"var(--ink-3)",fontWeight:600,textTransform:"uppercase",letterSpacing:".05em",marginBottom:2}}>{label}</div>
+                    <div style={{fontSize:13,fontWeight:600,color:"var(--ink)"}}>{val}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Fee lines */}
+              <div style={{marginBottom:14}}>
+                <div style={{fontSize:12,fontWeight:700,color:"var(--ink-3)",letterSpacing:".04em",marginBottom:8}}>FEE BREAKDOWN</div>
+                {q2.feeLines.length===0 && <div style={{fontSize:13,color:"var(--ink-3)"}}>No fee lines recorded.</div>}
+                {q2.feeLines.map((l,i)=>(
+                  <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"6px 0",borderBottom:"1px solid var(--line)",fontSize:13}}>
+                    <span style={{color:"var(--ink-2)"}}>{l.label}</span>
+                    <span style={{fontWeight:600,color:"var(--ink)"}}>{l.currency==="USD"?`$${(+l.amount).toFixed(2)}`:l.currency==="SGD"?`S$${(+l.amount).toFixed(2)}`:fmtIDR(+l.amount)}</span>
+                  </div>
+                ))}
+                <div style={{display:"flex",justifyContent:"space-between",padding:"8px 0",fontSize:14,fontWeight:700,color:"var(--navy)"}}>
+                  <span>Total (IDR)</span><span>{fmtIDR(+o.sell_idr||0)}</span>
+                </div>
+              </div>
+
+              {o.additional_info && <div style={{marginBottom:14}}>
+                <div style={{fontSize:12,fontWeight:700,color:"var(--ink-3)",letterSpacing:".04em",marginBottom:4}}>NOTES</div>
+                <div style={{fontSize:13,color:"var(--ink-2)",lineHeight:1.6,whiteSpace:"pre-wrap"}}>{o.additional_info}</div>
+              </div>}
+
+              {/* Action buttons */}
+              <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:4}}>
+                <button style={{...S.secBtn,color:"var(--bad)",borderColor:"var(--bad)"}}
+                  onClick={()=>setDelId(o.id)}>
+                  <Trash2 size={13}/> Remove from completed
+                </button>
+                <button style={S.printBtn} onClick={dlPDF}>
+                  <Download size={13}/> Download PDF
+                </button>
+              </div>
+            </div>}
           </div>
         );
       })}
     </div>
+
+    {delId && <ConfirmDialog danger title="Remove from completed?"
+      message="This moves the order back to active Invoices. The order data is kept — nothing is deleted."
+      confirmLabel={busy?"Moving…":"Move to invoices"} busy={busy}
+      onConfirm={()=>doDelete(delId)} onCancel={()=>setDelId(null)}/>}
   </>);
 }
 
