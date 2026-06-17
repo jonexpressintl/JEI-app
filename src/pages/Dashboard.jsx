@@ -97,7 +97,14 @@ export default function Dashboard() {
     // Extra costs added at invoice time (invoice tab)
     (o.extra_costs||[]).forEach(ec => feeLines.push({ label: ec.label, amount: +ec.amount, currency: ec.currency || "IDR" }));
     // Additional costs added at order time (order form)
-    (o.order_extra_fees||[]).forEach(ef => { if(ef.label||+ef.amount) feeLines.push({ label: ef.label||"Additional cost", amount: +ef.amount, currency: ef.currency || "USD" }); });
+    (o.order_extra_fees||[]).forEach(ef => {
+      const qty = +ef.qty || 1;
+      const total = (+ef.amount||0) * qty;
+      if(ef.label||total) feeLines.push({
+        label: qty > 1 ? `${ef.label||"Additional cost"} ×${qty}` : (ef.label||"Additional cost"),
+        amount: total, currency: ef.currency || "USD"
+      });
+    });
 
     return { vol: totalVol, charged, chargedAuto, basis, minApplied, rate, price: weightPrice, divisor: div, pkgCount: pkgs.length, feeLines, feeMode };
   };
@@ -777,6 +784,10 @@ function Completed({ctx}){
         const c=courierOf(s?.courier_id);
         const customer=D.customers.find(cu=>cu.id===o.customer_id);
         const q2=quote(o);
+        const fxU=+o.invoice_usd_rate||ctx.liveFx?.usd_idr||15850;
+        const fxS=+o.invoice_sgd_rate||ctx.liveFx?.sgd_idr||11900;
+        const toIDR=(amt,cur)=>cur==="USD"?(+amt||0)*fxU:cur==="SGD"?(+amt||0)*fxS:(+amt||0);
+        const totalIDR=+o.sell_idr||q2.feeLines.reduce((a,l)=>a+toIDR(l.amount,l.currency),0);
         const completedDate=o.completed_at?new Date(o.completed_at).toLocaleDateString("en-GB"):"—";
         const orderDate=o.order_date?new Date(o.order_date).toLocaleDateString("en-GB"):"—";
         const isOpen=openId===o.id;
@@ -810,7 +821,7 @@ function Completed({ctx}){
                 <div style={{fontSize:12.5,fontWeight:600,color:"var(--good)"}}>{completedDate}</div>
               </div>
               <div style={{flex:0,textAlign:"right"}}>
-                <div style={{fontFamily:"var(--display)",fontSize:15,fontWeight:800,color:"var(--navy)"}}>{fmtIDR(+o.sell_idr||0)}</div>
+                <div style={{fontFamily:"var(--display)",fontSize:15,fontWeight:800,color:"var(--navy)"}}>{fmtIDR(totalIDR)}</div>
               </div>
               <ChevronRight size={16} style={{color:"var(--ink-3)",transform:isOpen?"rotate(90deg)":"none",transition:".15s",flexShrink:0}}/>
             </button>
@@ -851,7 +862,7 @@ function Completed({ctx}){
                   </div>
                 ))}
                 <div style={{display:"flex",justifyContent:"space-between",padding:"8px 0",fontSize:14,fontWeight:700,color:"var(--navy)"}}>
-                  <span>Total (IDR)</span><span>{fmtIDR(+o.sell_idr||0)}</span>
+                  <span>Total (IDR)</span><span>{fmtIDR(totalIDR)}</span>
                 </div>
               </div>
 

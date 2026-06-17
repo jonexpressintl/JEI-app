@@ -71,7 +71,7 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
   const setV = (k, v) => setF({ ...f, [k]: v });
 
   // Extra fee helpers (multi-line additional costs)
-  function addExtraFee() { setF({ ...f, order_extra_fees: [...f.order_extra_fees, { label: "", amount: 0, currency: "USD" }] }); }
+  function addExtraFee() { setF({ ...f, order_extra_fees: [...f.order_extra_fees, { qty: 1, label: "", amount: 0, currency: "USD" }] }); }
   function setExtraFee(i, k, v) { const fees = [...f.order_extra_fees]; fees[i] = { ...fees[i], [k]: v }; setF({ ...f, order_extra_fees: fees }); }
   function removeExtraFee(i) { setF({ ...f, order_extra_fees: f.order_extra_fees.filter((_, j) => j !== i) }); }
 
@@ -342,13 +342,13 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
                     {f.packages.length > 1 ? <button style={S.pkgDel} onClick={() => removePkg(i)}><Trash2 size={14} /></button> : <span style={{ width: 28 }} />}
                   </div>
                   <div style={S.pkgBreakdown}>
-                    <span style={ch.basis === "actual" ? S.pkgWinner : S.pkgDim}>
-                      Actual: {isImperial ? `${(+p.weight).toFixed(2)} lb → ` : ""}{mp.weight.toFixed(2)} kg
-                    </span>
-                    <span style={S.pkgVs}>vs</span>
-                    <span style={ch.basis === "volumetric" ? S.pkgWinner : S.pkgDim}>Vol: {ch.vol.toFixed(2)} kg</span>
+                    <span style={S.pkgDim}>Actual: {isImperial ? `${(+p.weight).toFixed(2)} lb → ` : ""}{mp.weight.toFixed(2)} kg</span>
+                    <span style={S.pkgVs}>|</span>
+                    <span style={S.pkgDim}>Vol: {ch.vol.toFixed(2)} kg</span>
                     <span style={S.pkgArrow}>→</span>
-                    <span style={S.pkgCharged}>{ch.raw.toFixed(2)} kg ({ch.basis})</span>
+                    <span style={{...S.pkgCharged, color: ch.basis === "actual" ? "var(--ink)" : "var(--navy)"}}>
+                      Greater-of: {ch.raw.toFixed(2)} kg ({ch.basis})
+                    </span>
                   </div>
                 </div>
               );
@@ -356,23 +356,27 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
 
             <div style={S.pkgTotals}>
               <div style={S.pkgTotalRow}>
-                <span>Total actual: <b>{metricPkgs.reduce((a, p) => a + p.weight, 0).toFixed(2)} kg</b></span>
-                <span>Total vol: <b>{metricPkgs.reduce((a, p) => a + chargeable({ l: p.l, w: p.w, h: p.h }, p.weight, div).vol, 0).toFixed(2)} kg</b></span>
-                <span>Auto charged: <b>{totalChargedAuto.toFixed(1)} kg</b>{totalRaw < 3 ? <span style={{color:"var(--navy)",fontWeight:600}}> (3kg min applied)</span> : ""}</span>
+                <span>Total actual: <b>{totalActualKg.toFixed(2)} kg</b></span>
+                <span>Total vol: <b>{totalVolKg.toFixed(2)} kg</b></span>
+                <span>Sum of greater-of: <b>{totalRaw.toFixed(2)} kg</b></span>
               </div>
-              <div style={{...S.pkgTotalRow, alignItems:"center", borderTop:"1px solid var(--line)", paddingTop:8, marginTop:2}}>
-                <label style={{display:"flex",alignItems:"center",gap:8,flex:1}}>
-                  <span style={{fontSize:12.5,fontWeight:600,color:"var(--ink-2)"}}>Override charged weight (kg)</span>
+              <div style={{...S.pkgTotalRow, alignItems:"center", borderTop:"1px solid var(--line)", paddingTop:8, marginTop:4}}>
+                <span style={{fontSize:12.5,color:"var(--ink-3)"}}>
+                  {totalRaw < 3 ? "↑ 3 kg min applied" : `↑ rounded to 0.5 kg`}
+                  {" · "}÷{div}
+                </span>
+                <label style={{display:"flex",alignItems:"center",gap:8}}>
+                  <span style={{fontSize:12,fontWeight:600,color:"var(--ink-3)"}}>Override:</span>
                   <input type="number" value={f.charged_override} onChange={set("charged_override")}
-                    placeholder={totalChargedAuto.toFixed(1)} style={{...S.input,width:90,textAlign:"center",padding:"6px 8px",fontSize:13,fontWeight:700,
+                    placeholder={totalChargedAuto.toFixed(1)}
+                    style={{...S.input,width:85,textAlign:"center",padding:"5px 6px",fontSize:13,fontWeight:700,
                     ...(f.charged_override ? {borderColor:"var(--navy)",color:"var(--navy)"} : {})}} />
                 </label>
-                <span style={{ fontWeight: 700, color: "var(--navy)", fontSize: 14 }}>
-                  Final: {totalCharged.toFixed(1)} kg
-                  {f.charged_override && totalCharged < totalChargedAuto ? ` (↓${(totalChargedAuto - totalCharged).toFixed(1)} discount)` : ""}
+                <span style={{ fontWeight: 700, color: "var(--navy)", fontSize: 15 }}>
+                  Charged: {totalCharged.toFixed(1)} kg
+                  {f.charged_override && totalCharged < totalChargedAuto ? ` (↓${(totalChargedAuto - totalCharged).toFixed(1)} disc.)` : ""}
                 </span>
               </div>
-              <span style={{ fontSize: 11.5, color: "var(--ink-3)" }}>{f.packages.length} pkg · ÷{div} · rounded ↑ 0.5 kg</span>
             </div>
 
             <Field label="Qty (items)"><input style={S.input} type="number" value={f.qty} onChange={set("qty")} /></Field>
@@ -400,7 +404,7 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
                 </div>
                 <div style={S.totalBar}>
                   <span>Weight: {fmtFee(weightPrice, f.price_currency)}</span>
-                  {f.order_extra_fees.map((ef,i)=><span key={i}>+ {ef.label||"Extra"}: {fmtFee(+ef.amount||0,ef.currency)}</span>)}
+                  {f.order_extra_fees.map((ef,i)=><span key={i}>+ {ef.qty>1?`${ef.qty}× `:""}{ef.label||"Extra"}: {fmtFee((+ef.amount||0)*(+ef.qty||1),ef.currency)}</span>)}
                 </div>
               </>)}
 
@@ -425,7 +429,7 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
                   </div>
                   <div style={S.totalBar}>
                     <span>Weight: {fmtFee(weightPrice, f.price_currency)}</span>
-                    {f.order_extra_fees.map((ef,i)=><span key={i}>+ {ef.label||"Extra"}: {fmtFee(+ef.amount||0,ef.currency)}</span>)}
+                    {f.order_extra_fees.map((ef,i)=><span key={i}>+ {ef.qty>1?`${ef.qty}× `:""}{ef.label||"Extra"}: {fmtFee((+ef.amount||0)*(+ef.qty||1),ef.currency)}</span>)}
                   </div>
                 </>) : (<>
                   {/* Air leg — rate per kg with weight basis selector */}
@@ -447,23 +451,27 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
                   </div>
                   <div style={S.totalBar}><span>Air: {fmtFee(+f.fee_1,f.fee_1_cur)}/kg × {airKg.toFixed(1)} kg = {fmtFee((+f.fee_1||0)*airKg,f.fee_1_cur)}</span></div>
 
-                  {/* Sea leg — rate per CBM */}
+                  {/* Sea leg — rate per kg with weight basis */}
                   <div style={{...S.feeSectionTitle,marginTop:10}}>Seafreight leg (SIN→JKT)</div>
                   <div style={S.row2}>
-                    <Field label="SF rate/CBM (SIN→JKT)">
+                    <Field label="Rate per kg (sea)">
                       <div style={{display:"flex",gap:4}}>
                         <input style={{...S.input,flex:1}} type="number" value={f.fee_2} onChange={set("fee_2")} placeholder="0"/>
                         <select style={{...S.input,width:65}} value={f.fee_2_cur} onChange={set("fee_2_cur")}><option value="USD">USD</option><option value="SGD">SGD</option><option value="IDR">IDR</option></select>
                       </div>
                     </Field>
-                    <Field label={`CBM SIN→JKT (auto: ${autoCBM.toFixed(3)})`}>
-                      <input style={S.input} type="number" value={f.cbm_sg_id} onChange={set("cbm_sg_id")} placeholder={autoCBM.toFixed(3)}/>
+                    <Field label="Weight basis (sea)">
+                      <select style={S.input} value={f.sea_weight_basis} onChange={set("sea_weight_basis")}>
+                        <option value="charged">Greater-of ({totalCharged.toFixed(1)} kg)</option>
+                        <option value="volumetric">Volumetric ({finalizeCharged(totalVolKg).charged.toFixed(1)} kg)</option>
+                        <option value="actual">Actual ({finalizeCharged(totalActualKg).charged.toFixed(1)} kg)</option>
+                      </select>
                     </Field>
                   </div>
                   <div style={S.totalBar}>
                     <span>Air total: {fmtFee((+f.fee_1||0)*airKg,f.fee_1_cur)}</span>
-                    <span>+ SF: {fmtFee(+f.fee_2,f.fee_2_cur)}/CBM × {cbmSgId.toFixed(2)} = {fmtFee(sf2Total,f.fee_2_cur)}</span>
-                    {f.order_extra_fees.map((ef,i)=><span key={i}>+ {ef.label||"Extra"}: {fmtFee(+ef.amount||0,ef.currency)}</span>)}
+                    <span>+ Sea: {fmtFee(+f.fee_2,f.fee_2_cur)}/kg × {seaKg.toFixed(1)} kg = {fmtFee(seaPerKgTotal,f.fee_2_cur)}</span>
+                    {f.order_extra_fees.map((ef,i)=><span key={i}>+ {ef.qty>1?`${ef.qty}× `:""}{ef.qty>1?`${ef.qty}× `:""}{ef.label||"Extra"}: {fmtFee((+ef.amount||0)*(+ef.qty||1),ef.currency)}</span>)}
                   </div>
                 </>)}
               </>)}
@@ -494,7 +502,7 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
                 <div style={S.totalBar}>
                   <span>SF1: {fmtFee(+f.fee_1,f.fee_1_cur)}/CBM × {cbmUsSg.toFixed(2)} = {fmtFee(sf1Total,f.fee_1_cur)}</span>
                   <span>+ SF2: {fmtFee(+f.fee_2,f.fee_2_cur)}/CBM × {cbmSgId.toFixed(2)} = {fmtFee(sf2Total,f.fee_2_cur)}</span>
-                  {f.order_extra_fees.map((ef,i)=><span key={i}>+ {ef.label||"Extra"}: {fmtFee(+ef.amount||0,ef.currency)}</span>)}
+                  {f.order_extra_fees.map((ef,i)=><span key={i}>+ {ef.qty>1?`${ef.qty}× `:""}{ef.label||"Extra"}: {fmtFee((+ef.amount||0)*(+ef.qty||1),ef.currency)}</span>)}
                 </div>
               </>)}
             </div>
@@ -606,12 +614,19 @@ function ExtraFees({ fees, onAdd, onChange, onRemove, fmtFee, S }) {
         <button style={S.addPkgBtn} onClick={onAdd}><Plus size={12} /> Add cost</button>
       </div>
       {fees.length === 0 && (
-        <div style={{ fontSize: 12.5, color: "var(--ink-3)", padding: "8px 0" }}>No additional costs. Click "Add cost" to add one.</div>
+        <div style={{ fontSize: 12.5, color: "var(--ink-3)", padding: "6px 0" }}>No additional costs yet.</div>
       )}
       {fees.map((ef, i) => (
         <div key={i} style={{ display: "flex", gap: 6, marginBottom: 6, alignItems: "center" }}>
-          <input style={{ ...S.input, flex: 2 }} placeholder="Description (e.g. Clearance fee, Handling...)" value={ef.label} onChange={e => onChange(i, "label", e.target.value)} />
-          <input style={{ ...S.input, width: 90, textAlign: "right" }} type="number" placeholder="0" value={ef.amount} onChange={e => onChange(i, "amount", e.target.value)} />
+          <div style={{ display: "flex", flexDirection: "column", gap: 2, width: 56, flexShrink: 0 }}>
+            <span style={{ fontSize: 10.5, color: "var(--ink-3)", fontWeight: 600 }}>QTY</span>
+            <input style={{ ...S.input, width: 56, textAlign: "center", padding: "7px 4px" }} type="number" min="1" placeholder="1"
+              value={ef.qty ?? 1} onChange={e => onChange(i, "qty", +e.target.value || 1)} />
+          </div>
+          <input style={{ ...S.input, flex: 2 }} placeholder="Description (e.g. Repackage, Handling...)"
+            value={ef.label} onChange={e => onChange(i, "label", e.target.value)} />
+          <input style={{ ...S.input, width: 90, textAlign: "right" }} type="number" placeholder="0"
+            value={ef.amount} onChange={e => onChange(i, "amount", e.target.value)} />
           <select style={{ ...S.input, width: 65 }} value={ef.currency} onChange={e => onChange(i, "currency", e.target.value)}>
             <option value="USD">USD</option><option value="SGD">SGD</option><option value="IDR">IDR</option>
           </select>
