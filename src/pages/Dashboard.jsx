@@ -27,8 +27,18 @@ export default function Dashboard() {
   const D = useJEIData();
   const [tab, setTab] = useState("orders");
   const [liveFx, setLiveFx] = useState(null);
+  const [fxRefreshing, setFxRefreshing] = useState(false);
 
   useEffect(() => { fetchLiveRates().then(setLiveFx); }, []);
+
+  async function refreshFx() {
+    setFxRefreshing(true);
+    // Clear sessionStorage cache so fetchLiveRates goes to network
+    try { sessionStorage.removeItem("jei_fx_cache"); } catch {}
+    const rates = await fetchLiveRates();
+    setLiveFx(rates);
+    setFxRefreshing(false);
+  }
 
   // Ghost zero: auto-select number input content on focus so typing replaces the 0
   useEffect(() => {
@@ -151,6 +161,10 @@ export default function Dashboard() {
             <DollarSign size={12}/>
             USD/IDR {liveFx.usd_idr?.toLocaleString()} · SGD/IDR {liveFx.sgd_idr?.toLocaleString()}
             {!liveFx.live && <span style={{color:"var(--warn)"}}> (offline)</span>}
+            <button onClick={refreshFx} disabled={fxRefreshing} title="Refresh exchange rates"
+              style={{background:"transparent",border:"none",cursor:"pointer",padding:"0 2px",color:"rgba(255,255,255,.7)",display:"flex",alignItems:"center",marginLeft:4}}>
+              <RefreshCw size={11} style={{animation:fxRefreshing?"jei-spin 1s linear infinite":"none"}}/>
+            </button>
           </span>}
           <span style={S.who}>
             {isOwner ? <Eye size={13}/> : <EyeOff size={13}/>}
@@ -618,7 +632,7 @@ function InvoiceDoc({ctx,order,onComplete,reload}){
   const toIDR=(amt,cur)=>cur==="USD"?(+amt||0)*fxU:cur==="SGD"?(+amt||0)*fxS:(+amt||0);
   const fmtOrig=(amt,cur)=>cur==="USD"?`$${Number(amt||0).toFixed(2)}`:cur==="SGD"?`S$${Number(amt||0).toFixed(2)}`:fmtIDR(amt||0);
 
-  const grandTotalIDR=q.feeLines.reduce((a,l)=>a+toIDR(l.amount,l.currency),0);
+  const grandTotalIDR = q.feeLines.reduce((a,l)=>a+toIDR(l.amount,l.currency), 0);
 
   async function saveRates(){
     setSaving(true);
@@ -666,18 +680,54 @@ function InvoiceDoc({ctx,order,onComplete,reload}){
         <div><div style={S.dLabel}>Status</div><div style={{color:"var(--good)",fontWeight:600}}>Delivered</div></div>
         <div><div style={S.dLabel}>Payment</div><div className={"paybadge pay-"+(s?.payment??"Unpaid")} style={{display:"inline-block"}}>{s?.payment??"Unpaid"}</div></div></div>
 
-      {/* Line items in original currencies */}
-      <div style={S.invTableHead}><span style={{flex:3}}>Description</span><span style={{flex:1,textAlign:"right"}}>Amount</span><span style={{flex:1,textAlign:"right"}}>In IDR</span></div>
-      {q.feeLines.map((l,i)=>(
+      {/* Base fee lines — main pricing, read-only */}
+      <div style={S.invTableHead}><span style={{flex:3}}>Description</span><span style={{flex:1,textAlign:"right"}}>Amount</span><span style={{flex:1,textAlign:"right"}}>In IDR</span><span style={{width:28}}/></div>
+      {q.feeLines.length===0 && <div style={{padding:"12px 0",fontSize:13,color:"var(--ink-3)"}}>No fee lines recorded for this order.</div>}
+      {/* Main fees (weight/seafreight/airfreight) — not deletable from invoice */}
+      {q.feeLines.filter(l=>!l._fromOrderExtra && !l._fromInvoiceExtra).map((l,i)=>(
         <div key={i} style={S.invLine}>
           <span style={{flex:3}}>{l.label}</span>
           <span style={{flex:1,textAlign:"right"}}>{fmtOrig(l.amount,l.currency)}</span>
           <span style={{flex:1,textAlign:"right",fontWeight:600}}>{fmtIDR(toIDR(l.amount,l.currency))}</span>
+          <span style={{width:28}}/>
         </div>
       ))}
-      {q.feeLines.length===0 && <div style={{padding:"12px 0",fontSize:13,color:"var(--ink-3)"}}>No fee lines recorded for this order.</div>}
+      {/* Order-tab extra fees — deletable */}
+      {(order.order_extra_fees||[]).map((ef,i)=>{
+        const qty=+ef.qty||1;
+        const total=(+ef.amount||0)*qty;
+        const label=qty>1?`${ef.label||"Additional cost"} ×${qty}`:(ef.label||"Additional cost");
+        return(
+          <div key={"oef-"+i} style={{...S.invLine,background:"var(--gold-bg)"}}>
+            <span style={{flex:3,display:"flex",alignItems:"center",gap:6}}>
+              <span style={{fontSize:10,background:"var(--gold)",color:"#fff",borderRadius:4,padding:"1px 5px",fontWeight:700,letterSpacing:".04em"}}>ORDER</span>
+              {label}
+            </span>
+            <span style={{flex:1,textAlign:"right"}}>{fmtOrig(total,ef.currency)}</span>
+            <span style={{flex:1,textAlign:"right",fontWeight:600}}>{fmtIDR(toIDR(total,ef.currency))}</span>
+            <button onClick={async()=>{
+              const updated=(order.order_extra_fees||[]).filter((_,j)=>j!==i);
+              const patch={order_extra_fees:updated};
+              const {error}=await updateOrder(order.id,patch);
+              if(!error) patchOrder?patchOrder(order.id,patch):reload&&reload();
+            }} style={{width:28,background:"transparent",border:"none",color:"var(--bad)",cursor:"pointer",padding:2,flexShrink:0}}><Trash2 size={13}/></button>
+          </div>
+        );
+      })}
+      {/* Invoice-tab extra costs — deletable (existing behaviour) */}
+      {(order.extra_costs||[]).map((ec,i)=>(
+        <div key={"ec-"+i} style={S.invLine}>
+          <span style={{flex:3,display:"flex",alignItems:"center",gap:6}}>
+            <span style={{fontSize:10,background:"var(--navy)",color:"#fff",borderRadius:4,padding:"1px 5px",fontWeight:700,letterSpacing:".04em"}}>INVOICE</span>
+            {ec.label}
+          </span>
+          <span style={{flex:1,textAlign:"right"}}>{fmtOrig(ec.amount,ec.currency)}</span>
+          <span style={{flex:1,textAlign:"right",fontWeight:600}}>{fmtIDR(toIDR(ec.amount,ec.currency))}</span>
+          <button onClick={()=>removeCost(i)} style={{width:28,background:"transparent",border:"none",color:"var(--bad)",cursor:"pointer",padding:2,flexShrink:0}}><Trash2 size={13}/></button>
+        </div>
+      ))}
 
-      {/* Add extra cost */}
+      {/* Add invoice-level cost line */}
       <div style={S.addCostBox}>
         <div style={{fontSize:12,fontWeight:700,color:"var(--ink-3)",letterSpacing:".04em",marginBottom:8}}>ADD COST LINE</div>
         <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
@@ -688,19 +738,6 @@ function InvoiceDoc({ctx,order,onComplete,reload}){
           </select>
           <button style={S.printBtn} onClick={addCost}><Plus size={13}/> Add cost</button>
         </div>
-        {(order.extra_costs||[]).length>0 && (
-          <div style={{marginTop:10,display:"flex",flexDirection:"column",gap:4}}>
-            {(order.extra_costs||[]).map((ec,i)=>(
-              <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",fontSize:13,padding:"4px 0"}}>
-                <span>{ec.label}</span>
-                <span style={{display:"flex",alignItems:"center",gap:8}}>
-                  {fmtOrig(ec.amount,ec.currency)} ({fmtIDR(toIDR(ec.amount,ec.currency))})
-                  <button onClick={()=>removeCost(i)} style={{background:"transparent",border:"none",color:"var(--bad)",cursor:"pointer",padding:2}}><Trash2 size={13}/></button>
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
       </div>
 
       {/* Conversion rates */}
@@ -1166,5 +1203,6 @@ const CSS=`
 .payseg.on.pay-Paid{background:var(--good-bg);color:var(--good);border-color:var(--good)}
 
 input::placeholder{color:var(--ink-3)}select{cursor:pointer}
+@keyframes jei-spin{to{transform:rotate(360deg)}}
 @media print{.tab,.seg,nav,header button,footer{display:none}}
 `;
