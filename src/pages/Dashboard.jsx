@@ -1,7 +1,7 @@
 import { useState, useMemo, useRef, useEffect } from "react";
 import { Package, Ship, Truck, Eye, EyeOff, Search, ChevronRight, AlertCircle, CheckCircle2, FileText, Calculator, Tag, LayoutGrid, Plus, Printer, LogOut, RefreshCw, Pencil, Boxes, Circle, CreditCard, ExternalLink, Copy, Check, Download, Upload, Users, DollarSign, TrendingUp, Trash2 } from "lucide-react";
 import { useAuth } from "../lib/auth";
-import { useJEIData, updateCustomerRate, addCustomer, setShipmentStage, setShipmentPayment, setShipmentTracking, completeOrder, updateOrder, cascadeDeleteOrder } from "../lib/data";
+import { useJEIData, updateCustomerRate, addCustomer, setShipmentStage, setShipmentPayment, setShipmentTracking, completeOrder, updateOrder, cascadeDeleteOrder, addCostEntry, updateCostEntry, deleteCostEntry } from "../lib/data";
 import { chargeable, finalizeCharged, fmtIDR, fmtShort, toIDR, trackingUrl, MIN_KG, IN_TO_CM, LB_TO_KG } from "../lib/pricing";
 import { generateInvoicePDF, generateQuotationPDF } from "../lib/pdf";
 import ConfirmDialog from "../components/ConfirmDialog";
@@ -116,17 +116,10 @@ export default function Dashboard() {
       if (+o.fee_2) feeLines.push({ label: `Seafreight SIN→JKT (${cbmB.toFixed(2)} CBM × ${(+o.fee_2).toLocaleString()})`, amount: sf2Total, currency: o.fee_2_cur || "IDR" });
       if (+o.fee_additional) feeLines.push({ label: "Additional cost", amount: +o.fee_additional, currency: o.fee_additional_cur || "USD" });
     }
-    // Extra costs added at invoice time (invoice tab)
-    (o.extra_costs||[]).forEach(ec => feeLines.push({ label: ec.label, amount: +ec.amount, currency: ec.currency || "IDR" }));
-    // Additional costs added at order time (order form)
-    (o.order_extra_fees||[]).forEach(ef => {
-      const qty = +ef.qty || 1;
-      const total = (+ef.amount||0) * qty;
-      if(ef.label||total) feeLines.push({
-        label: qty > 1 ? `${ef.label||"Additional cost"} ×${qty}` : (ef.label||"Additional cost"),
-        amount: total, currency: ef.currency || "USD"
-      });
-    });
+    // NOTE: extra_costs (invoice-tab) and order_extra_fees (order-tab) are NOT added
+    // to feeLines here. They are rendered separately in InvoiceDoc with delete buttons,
+    // and added back for PDF generation in pdf.js directly.
+    // This prevents double-rendering in the invoice UI.
 
     return { vol: totalVol, charged, chargedAuto, basis, minApplied, rate, price: weightPrice, divisor: div, pkgCount: pkgs.length, feeLines, feeMode };
   };
@@ -142,6 +135,7 @@ export default function Dashboard() {
     {k:"orders",label:"Orders",icon:LayoutGrid},
     {k:"shipments",label:"Shipments",icon:Boxes},
     {k:"invoices",label:"Invoices",icon:FileText},
+    {k:"costs",label:"Costs",icon:CreditCard},
     {k:"completed",label:"Completed",icon:CheckCircle2},
     {k:"customers",label:"Customers",icon:Users},
     {k:"pricing",label:"Pricing",icon:Tag},
@@ -186,7 +180,8 @@ export default function Dashboard() {
       {tab==="shipments"&& <div style={S.main}><Shipments ctx={ctx}/></div>}
       {tab==="customers"&& <div style={S.main}><CustomerData ctx={ctx}/></div>}
       {tab==="pricing"  && <div style={S.main}><Pricing ctx={ctx} reload={D.reload}/></div>}
-      {tab==="invoices" && <div style={S.main}><Invoices ctx={ctx}/></div>}
+      {tab==="invoices"  && <div style={S.main}><Invoices ctx={ctx}/></div>}
+      {tab==="costs"     && <div style={S.main}><Costs ctx={ctx}/></div>}
       {tab==="completed" && <div style={S.main}><Completed ctx={ctx}/></div>}
       {tab==="finance" && isOwner && <div style={S.main}><Finance ctx={ctx}/></div>}
 
@@ -632,7 +627,12 @@ function InvoiceDoc({ctx,order,onComplete,reload}){
   const toIDR=(amt,cur)=>cur==="USD"?(+amt||0)*fxU:cur==="SGD"?(+amt||0)*fxS:(+amt||0);
   const fmtOrig=(amt,cur)=>cur==="USD"?`$${Number(amt||0).toFixed(2)}`:cur==="SGD"?`S$${Number(amt||0).toFixed(2)}`:fmtIDR(amt||0);
 
-  const grandTotalIDR = q.feeLines.reduce((a,l)=>a+toIDR(l.amount,l.currency), 0);
+  // Grand total = main fees + order-tab extras + invoice-tab extras
+  const extraFeesIDR = (order.order_extra_fees||[]).reduce((a,ef)=>{
+    const qty=+ef.qty||1; return a+toIDR((+ef.amount||0)*qty, ef.currency||"USD");
+  }, 0);
+  const invoiceFeesIDR = (order.extra_costs||[]).reduce((a,ec)=>a+toIDR(+ec.amount||0, ec.currency||"IDR"), 0);
+  const grandTotalIDR = q.feeLines.reduce((a,l)=>a+toIDR(l.amount,l.currency), 0) + extraFeesIDR + invoiceFeesIDR;
 
   async function saveRates(){
     setSaving(true);
@@ -767,6 +767,154 @@ function InvoiceDoc({ctx,order,onComplete,reload}){
 }
 
 // ──────────── COMPLETED ────────────
+// ──────────── COSTS ────────────
+function Costs({ctx}){
+  const {D,reload,shipmentOf}=ctx;
+  const [q,setQ]=useState("");
+  const [busy,setBusy]=useState(false);
+  const [editId,setEditId]=useState(null);
+
+  // New entry form state
+  const blank={label:"",amount:"",currency:"USD",shipment_id:"",cost_date:new Date().toISOString().slice(0,10),notes:""};
+  const [form,setForm]=useState(blank);
+  const [showForm,setShowForm]=useState(false);
+
+  // Conversion rates (shared for this tab's display)
+  const [usdRate,setUsdRate]=useState(ctx.liveFx?.usd_idr||"");
+  const [sgdRate,setSgdRate]=useState(ctx.liveFx?.sgd_idr||"");
+  const fxU=+usdRate||ctx.liveFx?.usd_idr||15850;
+  const fxS=+sgdRate||ctx.liveFx?.sgd_idr||11900;
+  const toIDR=(amt,cur)=>cur==="USD"?(+amt||0)*fxU:cur==="SGD"?(+amt||0)*fxS:(+amt||0);
+  const fmtO=(amt,cur)=>cur==="USD"?`$${Number(amt||0).toFixed(2)}`:cur==="SGD"?`S$${Number(amt||0).toFixed(2)}`:fmtIDR(amt||0);
+
+  const entries=D.costEntries||[];
+  const filtered=entries.filter(e=>[e.label,e.shipment_id,e.notes||""].join(" ").toLowerCase().includes(q.toLowerCase()));
+  const totalIDR=filtered.reduce((a,e)=>a+toIDR(e.amount,e.currency),0);
+
+  async function save(){
+    setBusy(true);
+    if(editId){
+      await updateCostEntry(editId,{label:form.label,amount:+form.amount,currency:form.currency,shipment_id:form.shipment_id||null,cost_date:form.cost_date,notes:form.notes});
+      setEditId(null);
+    } else {
+      await addCostEntry({label:form.label,amount:+form.amount,currency:form.currency,shipment_id:form.shipment_id||null,cost_date:form.cost_date,notes:form.notes});
+    }
+    setForm(blank); setShowForm(false); reload(); setBusy(false);
+  }
+
+  async function del(id){
+    setBusy(true);
+    await deleteCostEntry(id);
+    reload(); setBusy(false);
+  }
+
+  function startEdit(e){
+    setForm({label:e.label,amount:e.amount,currency:e.currency,shipment_id:e.shipment_id||"",cost_date:e.cost_date||"",notes:e.notes||""});
+    setEditId(e.id); setShowForm(true);
+  }
+
+  // All shipments that have completed orders (for the shipment picker)
+  const shipmentOptions=D.shipments.filter(s=>D.orders.some(o=>o.shipment_id===s.id));
+
+  return(<>
+    <div style={S.sectionLead}>
+      <h2 style={S.h2}>Costs</h2>
+      <p style={S.lead}>Record operational costs — shipping charges, handling, customs fees — linked to shipments. These are subtracted from revenue in the Finance tab.</p>
+    </div>
+
+    <section style={S.kpis}>
+      <Kpi label="Total entries" value={entries.length} sub="all costs"/>
+      <Kpi label="Showing" value={filtered.length} sub="after search"/>
+      <Kpi label="Total costs" value={fmtIDR(totalIDR)} sub="in IDR" warn={totalIDR>0}/>
+    </section>
+
+    {/* Conversion rates */}
+    <div style={{background:"var(--card)",border:"1px solid var(--line)",borderRadius:12,padding:"12px 16px",marginBottom:12,display:"flex",flexWrap:"wrap",gap:10,alignItems:"flex-end"}}>
+      <div style={{fontSize:12,fontWeight:700,color:"var(--ink-3)",width:"100%"}}>CONVERSION RATES (for IDR display)</div>
+      <label style={{display:"flex",flexDirection:"column",gap:4,fontSize:12,color:"var(--ink-3)",fontWeight:600}}>
+        USD → IDR<input type="number" style={{...S.input,width:140}} value={usdRate} onChange={e=>setUsdRate(e.target.value)} placeholder={ctx.liveFx?.usd_idr||15850}/>
+      </label>
+      <label style={{display:"flex",flexDirection:"column",gap:4,fontSize:12,color:"var(--ink-3)",fontWeight:600}}>
+        SGD → IDR<input type="number" style={{...S.input,width:140}} value={sgdRate} onChange={e=>setSgdRate(e.target.value)} placeholder={ctx.liveFx?.sgd_idr||11900}/>
+      </label>
+    </div>
+
+    {/* Add/edit form */}
+    <div style={{marginBottom:12,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+      <div style={{...S.searchWrap,flex:1,marginRight:10,marginBottom:0}}>
+        <Search size={15} style={{opacity:.5}}/><input style={S.search} placeholder="Search costs…" value={q} onChange={e=>setQ(e.target.value)}/>
+      </div>
+      <button style={S.printBtn} onClick={()=>{setShowForm(!showForm);setEditId(null);setForm(blank);}}>
+        <Plus size={13}/> {showForm&&!editId?"Cancel":"Add cost"}
+      </button>
+    </div>
+
+    {showForm && <div style={{background:"var(--card)",border:"1px solid var(--line)",borderRadius:12,padding:"16px",marginBottom:16}}>
+      <div style={{fontSize:12,fontWeight:700,color:"var(--ink-3)",letterSpacing:".04em",marginBottom:12}}>{editId?"EDIT COST ENTRY":"NEW COST ENTRY"}</div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:10,marginBottom:10}}>
+        <div><label style={{fontSize:12,color:"var(--ink-3)",fontWeight:600,display:"block",marginBottom:3}}>Description *</label>
+          <input style={{...S.input,width:"100%"}} placeholder="e.g. Shipping cost, Customs duty…" value={form.label} onChange={e=>setForm({...form,label:e.target.value})}/></div>
+        <div><label style={{fontSize:12,color:"var(--ink-3)",fontWeight:600,display:"block",marginBottom:3}}>Amount *</label>
+          <div style={{display:"flex",gap:4}}>
+            <input style={{...S.input,flex:1}} type="number" placeholder="0" value={form.amount} onChange={e=>setForm({...form,amount:e.target.value})}/>
+            <select style={{...S.input,width:70}} value={form.currency} onChange={e=>setForm({...form,currency:e.target.value})}>
+              <option value="USD">USD</option><option value="SGD">SGD</option><option value="IDR">IDR</option>
+            </select>
+          </div></div>
+        <div><label style={{fontSize:12,color:"var(--ink-3)",fontWeight:600,display:"block",marginBottom:3}}>Date</label>
+          <input style={{...S.input,width:"100%"}} type="date" value={form.cost_date} onChange={e=>setForm({...form,cost_date:e.target.value})}/></div>
+        <div><label style={{fontSize:12,color:"var(--ink-3)",fontWeight:600,display:"block",marginBottom:3}}>Link to shipment (optional)</label>
+          <select style={{...S.input,width:"100%"}} value={form.shipment_id} onChange={e=>setForm({...form,shipment_id:e.target.value})}>
+            <option value="">— not linked —</option>
+            {shipmentOptions.map(s=><option key={s.id} value={s.id}>{s.id} · {s.stage}</option>)}
+          </select></div>
+        <div><label style={{fontSize:12,color:"var(--ink-3)",fontWeight:600,display:"block",marginBottom:3}}>Notes</label>
+          <input style={{...S.input,width:"100%"}} placeholder="Optional details…" value={form.notes} onChange={e=>setForm({...form,notes:e.target.value})}/></div>
+      </div>
+      <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+        <button style={S.secBtn} onClick={()=>{setShowForm(false);setEditId(null);setForm(blank);}}>Cancel</button>
+        <button style={{...S.printBtn,opacity:(!form.label||!form.amount)?0.5:1}} onClick={save} disabled={!form.label||!form.amount||busy}>
+          {busy?"Saving…":editId?"Save changes":"Add cost"}
+        </button>
+      </div>
+    </div>}
+
+    {/* Cost entries table */}
+    {filtered.length===0
+      ? <div style={S.empty}>{entries.length===0?"No costs recorded yet.":"No entries match your search."}</div>
+      : <div style={{background:"var(--card)",border:"1px solid var(--line)",borderRadius:12,overflow:"hidden"}}>
+          <div style={{display:"flex",gap:10,padding:"9px 14px",background:"var(--head)",borderBottom:"1px solid var(--line)",fontSize:11,fontWeight:700,color:"var(--ink-3)",textTransform:"uppercase",letterSpacing:".06em"}}>
+            <span style={{flex:3}}>Description</span>
+            <span style={{flex:1.5}}>Shipment</span>
+            <span style={{flex:1}}>Date</span>
+            <span style={{flex:1,textAlign:"right"}}>Amount</span>
+            <span style={{flex:1,textAlign:"right"}}>In IDR</span>
+            <span style={{width:60}}/>
+          </div>
+          {filtered.map(e=>(
+            <div key={e.id} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",borderBottom:"1px solid var(--line)",fontSize:13}}>
+              <div style={{flex:3}}>
+                <div style={{fontWeight:600}}>{e.label}</div>
+                {e.notes&&<div style={{fontSize:11.5,color:"var(--ink-3)",marginTop:2}}>{e.notes}</div>}
+              </div>
+              <span style={{flex:1.5,fontSize:12,color:"var(--ink-3)",fontFamily:"var(--mono)"}}>{e.shipment_id||"—"}</span>
+              <span style={{flex:1,fontSize:12,color:"var(--ink-3)"}}>{e.cost_date?new Date(e.cost_date).toLocaleDateString("en-GB"):"—"}</span>
+              <span style={{flex:1,textAlign:"right",fontWeight:600}}>{fmtO(e.amount,e.currency)}</span>
+              <span style={{flex:1,textAlign:"right",color:"var(--bad)",fontWeight:600}}>−{fmtIDR(toIDR(e.amount,e.currency))}</span>
+              <div style={{width:60,display:"flex",gap:4,justifyContent:"flex-end"}}>
+                <button onClick={()=>startEdit(e)} style={{background:"transparent",border:"none",color:"var(--ink-3)",cursor:"pointer",padding:4}}><Pencil size={13}/></button>
+                <button onClick={()=>del(e.id)} style={{background:"transparent",border:"none",color:"var(--bad)",cursor:"pointer",padding:4}}><Trash2 size={13}/></button>
+              </div>
+            </div>
+          ))}
+          <div style={{display:"flex",justifyContent:"flex-end",padding:"10px 14px",borderTop:"1px solid var(--line)",fontWeight:700,fontSize:13,color:"var(--bad)"}}>
+            Total costs: −{fmtIDR(totalIDR)}
+          </div>
+        </div>
+    }
+  </>);
+}
+
 function Completed({ctx}){
   const {D,custName,shipmentOf,courierOf,quote,reload}=ctx;
   const [q,setQ]=useState("");
@@ -824,7 +972,9 @@ function Completed({ctx}){
         const fxU=+o.invoice_usd_rate||ctx.liveFx?.usd_idr||15850;
         const fxS=+o.invoice_sgd_rate||ctx.liveFx?.sgd_idr||11900;
         const toI=(amt,cur)=>cur==="USD"?(+amt||0)*fxU:cur==="SGD"?(+amt||0)*fxS:(+amt||0);
-        const total=+o.sell_idr||quote(o).feeLines.reduce((s,l)=>s+toI(l.amount,l.currency),0);
+        const eQ=(o.order_extra_fees||[]).reduce((s,ef)=>{const qty=+ef.qty||1;return s+toI((+ef.amount||0)*qty,ef.currency||"USD");},0);
+        const iQ=(o.extra_costs||[]).reduce((s,ec)=>s+toI(+ec.amount||0,ec.currency||"IDR"),0);
+        const total=+o.sell_idr||(quote(o).feeLines.reduce((s,l)=>s+toI(l.amount,l.currency),0)+eQ+iQ);
         return a+total;
       },0)/1e6)+"jt"} sub="from completed"/>
     </section>
@@ -858,7 +1008,9 @@ function Completed({ctx}){
         const fxU=+o.invoice_usd_rate||ctx.liveFx?.usd_idr||15850;
         const fxS=+o.invoice_sgd_rate||ctx.liveFx?.sgd_idr||11900;
         const toIDR=(amt,cur)=>cur==="USD"?(+amt||0)*fxU:cur==="SGD"?(+amt||0)*fxS:(+amt||0);
-        const totalIDR=+o.sell_idr||q2.feeLines.reduce((a,l)=>a+toIDR(l.amount,l.currency),0);
+        const extraQ=(o.order_extra_fees||[]).reduce((a,ef)=>{const qty=+ef.qty||1;return a+toIDR((+ef.amount||0)*qty,ef.currency||"USD");},0);
+        const invoiceQ=(o.extra_costs||[]).reduce((a,ec)=>a+toIDR(+ec.amount||0,ec.currency||"IDR"),0);
+        const totalIDR=+o.sell_idr||(q2.feeLines.reduce((a,l)=>a+toIDR(l.amount,l.currency),0)+extraQ+invoiceQ);
         const completedDate=o.completed_at?new Date(o.completed_at).toLocaleDateString("en-GB"):"—";
         const orderDate=o.order_date?new Date(o.order_date).toLocaleDateString("en-GB"):"—";
         const isOpen=openId===o.id;
@@ -941,6 +1093,33 @@ function Completed({ctx}){
                 <div style={{fontSize:12,fontWeight:700,color:"var(--ink-3)",letterSpacing:".04em",marginBottom:4}}>NOTES</div>
                 <div style={{fontSize:13,color:"var(--ink-2)",lineHeight:1.6,whiteSpace:"pre-wrap"}}>{o.additional_info}</div>
               </div>}
+
+              {/* Linked costs for this shipment */}
+              {(()=>{
+                const linkedCosts=(D.costEntries||[]).filter(c=>c.shipment_id===o.shipment_id);
+                if(!linkedCosts.length) return null;
+                const fxU2=+o.invoice_usd_rate||ctx.liveFx?.usd_idr||15850;
+                const fxS2=+o.invoice_sgd_rate||ctx.liveFx?.sgd_idr||11900;
+                const toI2=(amt,cur)=>cur==="USD"?(+amt||0)*fxU2:cur==="SGD"?(+amt||0)*fxS2:(+amt||0);
+                const costTotalIDR=linkedCosts.reduce((a,c)=>a+toI2(c.amount,c.currency),0);
+                return(
+                  <div style={{marginBottom:14}}>
+                    <div style={{fontSize:12,fontWeight:700,color:"var(--ink-3)",letterSpacing:".04em",marginBottom:8}}>LINKED COSTS ({o.shipment_id})</div>
+                    {linkedCosts.map((c,ci)=>(
+                      <div key={ci} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"5px 0",borderBottom:"1px solid var(--line)",fontSize:13}}>
+                        <span style={{color:"var(--ink-2)"}}>{c.label}{c.notes?<span style={{fontSize:11,color:"var(--ink-3)"}}> · {c.notes}</span>:null}</span>
+                        <span style={{fontWeight:600,color:"var(--bad)"}}>−{c.currency==="USD"?`$${(+c.amount).toFixed(2)}`:c.currency==="SGD"?`S$${(+c.amount).toFixed(2)}`:fmtIDR(+c.amount)}</span>
+                      </div>
+                    ))}
+                    <div style={{display:"flex",justifyContent:"space-between",padding:"6px 0",fontSize:13,fontWeight:700,color:"var(--bad)"}}>
+                      <span>Total costs</span><span>−{fmtIDR(costTotalIDR)}</span>
+                    </div>
+                    <div style={{display:"flex",justifyContent:"space-between",padding:"6px 0",fontSize:14,fontWeight:700,color:"var(--navy)"}}>
+                      <span>Net (Revenue − Costs)</span><span>{fmtIDR(totalIDR-costTotalIDR)}</span>
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* Action buttons */}
               <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:4,flexWrap:"wrap"}}>

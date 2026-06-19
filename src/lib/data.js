@@ -5,7 +5,7 @@ import { supabase } from "./supabase";
 // automatically — that's RLS doing its job, not the frontend hiding data.
 export function useJEIData() {
   const [data, setData] = useState({
-    customers: [], couriers: [], shipments: [], orders: [], costs: [], fx: null,
+    customers: [], couriers: [], shipments: [], orders: [], costs: [], fx: null, costEntries: [],
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -13,13 +13,14 @@ export function useJEIData() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [customers, couriers, shipments, orders, costs, fx] = await Promise.all([
+      const [customers, couriers, shipments, orders, costs, fx, costEntries] = await Promise.all([
         supabase.from("customers").select("*").order("name"),
         supabase.from("couriers").select("*"),
         supabase.from("shipments").select("*"),
         supabase.from("orders").select("*"),
         supabase.from("shipment_costs").select("*"), // RLS: [] for admin
         supabase.from("fx_rates").select("*").single(),
+        supabase.from("cost_entries").select("*").order("cost_date", { ascending: false }),
       ]);
       const firstErr = [customers, couriers, shipments, orders, fx].find(r => r.error);
       if (firstErr?.error) throw firstErr.error;
@@ -30,6 +31,7 @@ export function useJEIData() {
         orders: orders.data ?? [],
         costs: costs.data ?? [],
         fx: fx.data ?? { usd_idr: 16250, sgd_idr: 12050 },
+        costEntries: costEntries.data ?? [],
       });
     } catch (e) {
       setError(e.message ?? "Failed to load data");
@@ -142,3 +144,16 @@ export const setShipmentTracking = (id, patch) =>
 // Mark an order as completed (archives it from active views)
 export const completeOrder = (id) =>
   supabase.from("orders").update({ completed: true, completed_at: new Date().toISOString() }).eq("id", id);
+
+// ── Cost entries ──
+export const getCostEntries = () =>
+  supabase.from("cost_entries").select("*").order("cost_date", { ascending: false });
+
+export const addCostEntry = (entry) =>
+  supabase.from("cost_entries").insert(entry).select();
+
+export const updateCostEntry = (id, patch) =>
+  supabase.from("cost_entries").update(patch).eq("id", id);
+
+export const deleteCostEntry = (id) =>
+  supabase.from("cost_entries").delete().eq("id", id);
