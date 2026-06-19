@@ -141,9 +141,13 @@ export const setShipmentPayment = (id, payment) =>
 export const setShipmentTracking = (id, patch) =>
   supabase.from("shipments").update(patch).eq("id", id);
 
-// Mark an order as completed (archives it from active views)
-export const completeOrder = (id) =>
-  supabase.from("orders").update({ completed: true, completed_at: new Date().toISOString() }).eq("id", id);
+// Mark an order as invoiced — moves it to Costs tab
+export const markAsInvoiced = (id, patch) =>
+  supabase.from("orders").update({ invoiced: true, invoiced_at: new Date().toISOString(), ...patch }).eq("id", id);
+
+// Mark an order as completed — moves it to Completed tab
+export const completeOrder = (id, patch) =>
+  supabase.from("orders").update({ completed: true, completed_at: new Date().toISOString(), ...patch }).eq("id", id);
 
 // ── Cost entries ──
 export const getCostEntries = () =>

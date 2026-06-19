@@ -1,7 +1,7 @@
 import { useState, useMemo, useRef, useEffect } from "react";
 import { Package, Ship, Truck, Eye, EyeOff, Search, ChevronRight, AlertCircle, CheckCircle2, FileText, Calculator, Tag, LayoutGrid, Plus, Printer, LogOut, RefreshCw, Pencil, Boxes, Circle, CreditCard, ExternalLink, Copy, Check, Download, Upload, Users, DollarSign, TrendingUp, Trash2 } from "lucide-react";
 import { useAuth } from "../lib/auth";
-import { useJEIData, updateCustomerRate, addCustomer, setShipmentStage, setShipmentPayment, setShipmentTracking, completeOrder, updateOrder, cascadeDeleteOrder, addCostEntry, updateCostEntry, deleteCostEntry } from "../lib/data";
+import { useJEIData, updateCustomerRate, addCustomer, setShipmentStage, setShipmentPayment, setShipmentTracking, completeOrder, markAsInvoiced, updateOrder, cascadeDeleteOrder, addCostEntry, updateCostEntry, deleteCostEntry } from "../lib/data";
 import { chargeable, finalizeCharged, fmtIDR, fmtShort, toIDR, trackingUrl, MIN_KG, IN_TO_CM, LB_TO_KG } from "../lib/pricing";
 import { generateInvoicePDF, generateQuotationPDF } from "../lib/pdf";
 import ConfirmDialog from "../components/ConfirmDialog";
@@ -562,36 +562,31 @@ function CourierTable({couriers}){
 
 // ──────────── INVOICES ────────────
 function Invoices({ctx}){
-  const {D,custName,shipmentOf,reload}=ctx;
+  const {D,custName,shipmentOf,reload,patchOrder}=ctx;
   const [q,setQ]=useState("");
-  const [showCompleted,setShowCompleted]=useState(false);
   const delivered=D.orders.filter(o=>shipmentOf(o.shipment_id)?.stage==="Delivered to customer");
-  const active=delivered.filter(o=>!o.completed);
-  const completed=delivered.filter(o=>o.completed);
-  const list=showCompleted?completed:active;
-  const filtered=list.filter(o=>[o.id,custName(o.customer_id),o.product].join(" ").toLowerCase().includes(q.toLowerCase()));
+  // Invoices tab: delivered, not yet invoiced, not completed
+  const active=delivered.filter(o=>!o.invoiced&&!o.completed);
+  const filtered=active.filter(o=>[o.id,custName(o.customer_id),o.product].join(" ").toLowerCase().includes(q.toLowerCase()));
   const [openId,setOpen]=useState(null);
 
-  async function handleComplete(orderId){
-    await completeOrder(orderId);
+  async function handleMarkInvoiced(orderId, patch){
+    await markAsInvoiced(orderId, patch);
     setOpen(null);
     reload();
   }
 
   return(<>
     <div style={S.sectionLead}><h2 style={S.h2}>Invoices</h2>
-      <p style={S.lead}>Delivered orders are billable. Complete an invoice to archive it from active views.</p></div>
+      <p style={S.lead}>Delivered orders ready to invoice. Review pricing, add invoice-level costs, set conversion rates, then click <b>"Mark as Invoiced"</b> to move to the Costs tab for final profit calculation.</p></div>
     <div style={{display:"flex",gap:10,marginBottom:14,flexWrap:"wrap",alignItems:"center"}}>
       <div style={{...S.searchWrap,flex:1,maxWidth:320,marginBottom:0}}><Search size={15} style={{opacity:.5}}/><input style={S.search} placeholder="Search invoices…" value={q} onChange={e=>setQ(e.target.value)}/></div>
-      <div style={{display:"flex",gap:6}}>
-        <button className={"seg "+(!showCompleted?"on":"")} onClick={()=>{setShowCompleted(false);setOpen(null);}}>Active ({active.length})</button>
-        <button className={"seg "+(showCompleted?"on":"")} onClick={()=>{setShowCompleted(true);setOpen(null);}}>Completed ({completed.length})</button>
-      </div>
+      <span style={{fontSize:13,color:"var(--ink-3)"}}>{active.length} pending</span>
     </div>
-    {filtered.length===0 && <div style={S.empty}>{showCompleted?"No completed invoices.":"No active invoices."}</div>}
+    {filtered.length===0 && <div style={S.empty}>No active invoices — all delivered orders have been invoiced.</div>}
     <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:14}}>
       {filtered.map(o=>{const s=shipmentOf(o.shipment_id);return(
-        <button key={o.id} onClick={()=>setOpen(openId===o.id?null:o.id)} style={{...S.shipCard,padding:"12px 16px",display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer",border:openId===o.id?"2px solid var(--accent)":"1px solid var(--line)",background:openId===o.id?"var(--good-bg)":"var(--card)"}}>
+        <button key={o.id} onClick={()=>setOpen(openId===o.id?null:o.id)} style={{...S.shipCard,padding:"12px 16px",display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer",border:openId===o.id?"2px solid var(--navy)":"1px solid var(--line)",background:openId===o.id?"var(--head)":"var(--card)"}}>
           <div style={{display:"flex",alignItems:"center",gap:10}}>
             <FileText size={15} style={{color:"var(--navy)"}}/>
             <span style={{fontFamily:"var(--mono)",fontWeight:700,fontSize:13}}>{o.id}</span>
@@ -605,7 +600,7 @@ function Invoices({ctx}){
         </button>
       );})}
     </div>
-    {openId && <InvoiceDoc ctx={ctx} order={filtered.find(o=>o.id===openId)} onComplete={handleComplete} reload={reload}/>}
+    {openId && <InvoiceDoc ctx={ctx} order={filtered.find(o=>o.id===openId)} onComplete={handleMarkInvoiced} reload={reload}/>}
   </>);
 }
 
@@ -756,12 +751,12 @@ function InvoiceDoc({ctx,order,onComplete,reload}){
       <div style={S.invFoot}><span>Payment in IDR within 14 days · Bank transfer to JEI account</span>
         <div style={{display:"flex",gap:8}}>
           <button style={S.printBtn} onClick={downloadPDF}><Download size={13}/> Download PDF</button>
-          {!order.completed && onComplete && <button style={{...S.printBtn,background:"var(--good)",color:"#fff"}} onClick={async()=>{
-            // Save current rates before completing so they're locked on the completed record
+          {!order.invoiced && !order.completed && onComplete && <button style={{...S.printBtn,background:"var(--warn)",color:"#fff"}} onClick={async()=>{
+            // Save current rates + total before marking invoiced
             const patch={invoice_usd_rate:+usdRate||null,invoice_sgd_rate:+sgdRate||null,sell_idr:Math.round(grandTotalIDR)};
             await updateOrder(order.id,patch);
-            onComplete(order.id);
-          }}><Check size={13}/> Complete</button>}
+            onComplete(order.id, patch);
+          }}><Check size={13}/> Mark as Invoiced</button>}
         </div></div>
     </div>);
 }
@@ -769,150 +764,208 @@ function InvoiceDoc({ctx,order,onComplete,reload}){
 // ──────────── COMPLETED ────────────
 // ──────────── COSTS ────────────
 function Costs({ctx}){
-  const {D,reload,shipmentOf}=ctx;
+  const {D,custName,shipmentOf,courierOf,quote,reload,patchOrder}=ctx;
   const [q,setQ]=useState("");
-  const [busy,setBusy]=useState(false);
-  const [editId,setEditId]=useState(null);
+  const [openId,setOpenId]=useState(null);
 
-  // New entry form state
-  const blank={label:"",amount:"",currency:"USD",shipment_id:"",cost_date:new Date().toISOString().slice(0,10),notes:""};
-  const [form,setForm]=useState(blank);
-  const [showForm,setShowForm]=useState(false);
-
-  // Conversion rates (shared for this tab's display)
-  const [usdRate,setUsdRate]=useState(ctx.liveFx?.usd_idr||"");
-  const [sgdRate,setSgdRate]=useState(ctx.liveFx?.sgd_idr||"");
-  const fxU=+usdRate||ctx.liveFx?.usd_idr||15850;
-  const fxS=+sgdRate||ctx.liveFx?.sgd_idr||11900;
-  const toIDR=(amt,cur)=>cur==="USD"?(+amt||0)*fxU:cur==="SGD"?(+amt||0)*fxS:(+amt||0);
-  const fmtO=(amt,cur)=>cur==="USD"?`$${Number(amt||0).toFixed(2)}`:cur==="SGD"?`S$${Number(amt||0).toFixed(2)}`:fmtIDR(amt||0);
-
-  const entries=D.costEntries||[];
-  const filtered=entries.filter(e=>[e.label,e.shipment_id,e.notes||""].join(" ").toLowerCase().includes(q.toLowerCase()));
-  const totalIDR=filtered.reduce((a,e)=>a+toIDR(e.amount,e.currency),0);
-
-  async function save(){
-    setBusy(true);
-    if(editId){
-      await updateCostEntry(editId,{label:form.label,amount:+form.amount,currency:form.currency,shipment_id:form.shipment_id||null,cost_date:form.cost_date,notes:form.notes});
-      setEditId(null);
-    } else {
-      await addCostEntry({label:form.label,amount:+form.amount,currency:form.currency,shipment_id:form.shipment_id||null,cost_date:form.cost_date,notes:form.notes});
-    }
-    setForm(blank); setShowForm(false); reload(); setBusy(false);
-  }
-
-  async function del(id){
-    setBusy(true);
-    await deleteCostEntry(id);
-    reload(); setBusy(false);
-  }
-
-  function startEdit(e){
-    setForm({label:e.label,amount:e.amount,currency:e.currency,shipment_id:e.shipment_id||"",cost_date:e.cost_date||"",notes:e.notes||""});
-    setEditId(e.id); setShowForm(true);
-  }
-
-  // All shipments that have completed orders (for the shipment picker)
-  const shipmentOptions=D.shipments.filter(s=>D.orders.some(o=>o.shipment_id===s.id));
+  // Invoiced orders waiting for cost review before completing
+  const invoiced=D.orders.filter(o=>o.invoiced&&!o.completed);
+  const filtered=invoiced.filter(o=>[o.id,custName(o.customer_id),o.product,o.shipment_id].join(" ").toLowerCase().includes(q.toLowerCase()));
 
   return(<>
     <div style={S.sectionLead}>
       <h2 style={S.h2}>Costs</h2>
-      <p style={S.lead}>Record operational costs — shipping charges, handling, customs fees — linked to shipments. These are subtracted from revenue in the Finance tab.</p>
+      <p style={S.lead}>Orders move here after invoicing. Add operational costs, set conversion rates, review net profit — then click <b>"Complete"</b> to archive.</p>
     </div>
-
     <section style={S.kpis}>
-      <Kpi label="Total entries" value={entries.length} sub="all costs"/>
+      <Kpi label="Pending" value={invoiced.length} sub="awaiting cost review"/>
       <Kpi label="Showing" value={filtered.length} sub="after search"/>
-      <Kpi label="Total costs" value={fmtIDR(totalIDR)} sub="in IDR" warn={totalIDR>0}/>
     </section>
-
-    {/* Conversion rates */}
-    <div style={{background:"var(--card)",border:"1px solid var(--line)",borderRadius:12,padding:"12px 16px",marginBottom:12,display:"flex",flexWrap:"wrap",gap:10,alignItems:"flex-end"}}>
-      <div style={{fontSize:12,fontWeight:700,color:"var(--ink-3)",width:"100%"}}>CONVERSION RATES (for IDR display)</div>
-      <label style={{display:"flex",flexDirection:"column",gap:4,fontSize:12,color:"var(--ink-3)",fontWeight:600}}>
-        USD → IDR<input type="number" style={{...S.input,width:140}} value={usdRate} onChange={e=>setUsdRate(e.target.value)} placeholder={ctx.liveFx?.usd_idr||15850}/>
-      </label>
-      <label style={{display:"flex",flexDirection:"column",gap:4,fontSize:12,color:"var(--ink-3)",fontWeight:600}}>
-        SGD → IDR<input type="number" style={{...S.input,width:140}} value={sgdRate} onChange={e=>setSgdRate(e.target.value)} placeholder={ctx.liveFx?.sgd_idr||11900}/>
-      </label>
+    <div style={{...S.searchWrap,marginBottom:14}}>
+      <Search size={15} style={{opacity:.5}}/><input style={S.search} placeholder="Search orders…" value={q} onChange={e=>setQ(e.target.value)}/>
     </div>
-
-    {/* Add/edit form */}
-    <div style={{marginBottom:12,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-      <div style={{...S.searchWrap,flex:1,marginRight:10,marginBottom:0}}>
-        <Search size={15} style={{opacity:.5}}/><input style={S.search} placeholder="Search costs…" value={q} onChange={e=>setQ(e.target.value)}/>
-      </div>
-      <button style={S.printBtn} onClick={()=>{setShowForm(!showForm);setEditId(null);setForm(blank);}}>
-        <Plus size={13}/> {showForm&&!editId?"Cancel":"Add cost"}
-      </button>
+    {filtered.length===0&&<div style={S.empty}>{invoiced.length===0?"No orders pending cost review — mark invoices as invoiced first.":"No orders match your search."}</div>}
+    <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:14}}>
+      {filtered.map(o=>{
+        const s=shipmentOf(o.shipment_id);
+        return(
+          <button key={o.id} onClick={()=>setOpenId(openId===o.id?null:o.id)}
+            style={{...S.shipCard,padding:"12px 16px",display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer",
+              border:openId===o.id?"2px solid var(--navy)":"1px solid var(--line)",background:openId===o.id?"var(--head)":"var(--card)"}}>
+            <div style={{display:"flex",alignItems:"center",gap:10}}>
+              <CreditCard size={15} style={{color:"var(--navy)"}}/>
+              <span style={{fontFamily:"var(--mono)",fontWeight:700,fontSize:13}}>{o.id}</span>
+              <span style={{fontWeight:600}}>{custName(o.customer_id)}</span>
+              <span style={{fontSize:12.5,color:"var(--ink-3)"}}>{o.product}</span>
+            </div>
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
+              <span className={"paybadge pay-"+(s?.payment??"Unpaid")}>{s?.payment??"Unpaid"}</span>
+              <span style={{fontFamily:"var(--display)",fontWeight:700,fontSize:14,color:"var(--navy)"}}>{fmtIDR(Number(o.sell_idr||0))}</span>
+              <ChevronRight size={14} style={{color:"var(--ink-3)",transform:openId===o.id?"rotate(90deg)":"none",transition:".15s"}}/>
+            </div>
+          </button>
+        );
+      })}
     </div>
+    {openId && <CostDoc ctx={ctx} order={filtered.find(o=>o.id===openId)} reload={reload} onClose={()=>setOpenId(null)}/>}
+  </>);
+}
 
-    {showForm && <div style={{background:"var(--card)",border:"1px solid var(--line)",borderRadius:12,padding:"16px",marginBottom:16}}>
-      <div style={{fontSize:12,fontWeight:700,color:"var(--ink-3)",letterSpacing:".04em",marginBottom:12}}>{editId?"EDIT COST ENTRY":"NEW COST ENTRY"}</div>
-      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:10,marginBottom:10}}>
-        <div><label style={{fontSize:12,color:"var(--ink-3)",fontWeight:600,display:"block",marginBottom:3}}>Description *</label>
-          <input style={{...S.input,width:"100%"}} placeholder="e.g. Shipping cost, Customs duty…" value={form.label} onChange={e=>setForm({...form,label:e.target.value})}/></div>
-        <div><label style={{fontSize:12,color:"var(--ink-3)",fontWeight:600,display:"block",marginBottom:3}}>Amount *</label>
-          <div style={{display:"flex",gap:4}}>
-            <input style={{...S.input,flex:1}} type="number" placeholder="0" value={form.amount} onChange={e=>setForm({...form,amount:e.target.value})}/>
-            <select style={{...S.input,width:70}} value={form.currency} onChange={e=>setForm({...form,currency:e.target.value})}>
-              <option value="USD">USD</option><option value="SGD">SGD</option><option value="IDR">IDR</option>
-            </select>
-          </div></div>
-        <div><label style={{fontSize:12,color:"var(--ink-3)",fontWeight:600,display:"block",marginBottom:3}}>Date</label>
-          <input style={{...S.input,width:"100%"}} type="date" value={form.cost_date} onChange={e=>setForm({...form,cost_date:e.target.value})}/></div>
-        <div><label style={{fontSize:12,color:"var(--ink-3)",fontWeight:600,display:"block",marginBottom:3}}>Link to shipment (optional)</label>
-          <select style={{...S.input,width:"100%"}} value={form.shipment_id} onChange={e=>setForm({...form,shipment_id:e.target.value})}>
-            <option value="">— not linked —</option>
-            {shipmentOptions.map(s=><option key={s.id} value={s.id}>{s.id} · {s.stage}</option>)}
-          </select></div>
-        <div><label style={{fontSize:12,color:"var(--ink-3)",fontWeight:600,display:"block",marginBottom:3}}>Notes</label>
-          <input style={{...S.input,width:"100%"}} placeholder="Optional details…" value={form.notes} onChange={e=>setForm({...form,notes:e.target.value})}/></div>
+function CostDoc({ctx,order,reload,onClose}){
+  const {D,custName,courierOf,shipmentOf,quote}=ctx;
+  if(!order) return null;
+  const q=quote(order);
+  const s=shipmentOf(order.shipment_id);
+  const c=courierOf(s?.courier_id);
+  const customer=D.customers.find(cu=>cu.id===order.customer_id);
+  const invNo="INV-"+order.id.replace("ORD-","");
+
+  // Per-order conversion rates (default to saved invoice rates)
+  const [usdRate,setUsdRate]=useState(order.invoice_usd_rate||"");
+  const [sgdRate,setSgdRate]=useState(order.invoice_sgd_rate||"");
+  const [saving,setSaving]=useState(false);
+
+  // Cost lines for this order
+  const orderCosts=(D.costEntries||[]).filter(e=>e.order_id===order.id);
+  const [newCostLabel,setNewCostLabel]=useState("");
+  const [newCostAmt,setNewCostAmt]=useState("");
+  const [newCostCur,setNewCostCur]=useState("USD");
+
+  const fxU=+usdRate||ctx.liveFx?.usd_idr||15850;
+  const fxS=+sgdRate||ctx.liveFx?.sgd_idr||11900;
+  const toIDR=(amt,cur)=>cur==="USD"?(+amt||0)*fxU:cur==="SGD"?(+amt||0)*fxS:(+amt||0);
+  const fmtOrig=(amt,cur)=>cur==="USD"?`$${Number(amt||0).toFixed(2)}`:cur==="SGD"?`S$${Number(amt||0).toFixed(2)}`:fmtIDR(amt||0);
+
+  // Revenue = all fee lines + order extras + invoice extras
+  const extraFeesIDR=(order.order_extra_fees||[]).reduce((a,ef)=>{const qty=+ef.qty||1;return a+toIDR((+ef.amount||0)*qty,ef.currency||"USD");},0);
+  const invoiceFeesIDR=(order.extra_costs||[]).reduce((a,ec)=>a+toIDR(+ec.amount||0,ec.currency||"IDR"),0);
+  const revenueIDR=q.feeLines.reduce((a,l)=>a+toIDR(l.amount,l.currency),0)+extraFeesIDR+invoiceFeesIDR;
+
+  // Costs = cost entries linked to this order
+  const costsIDR=orderCosts.reduce((a,c)=>a+toIDR(c.amount,c.currency),0);
+  const netIDR=revenueIDR-costsIDR;
+
+  async function addCost(){
+    if(!newCostLabel.trim()||!newCostAmt) return;
+    await addCostEntry({label:newCostLabel.trim(),amount:+newCostAmt,currency:newCostCur,order_id:order.id,cost_date:new Date().toISOString().slice(0,10)});
+    setNewCostLabel("");setNewCostAmt("");
+    reload();
+  }
+  async function removeCost(id){
+    await deleteCostEntry(id);
+    reload();
+  }
+  async function saveRates(){
+    setSaving(true);
+    await updateOrder(order.id,{invoice_usd_rate:+usdRate||null,invoice_sgd_rate:+sgdRate||null});
+    setSaving(false);
+    reload();
+  }
+  async function doComplete(){
+    setSaving(true);
+    await completeOrder(order.id,{invoice_usd_rate:+usdRate||null,invoice_sgd_rate:+sgdRate||null,sell_idr:Math.round(revenueIDR)});
+    onClose();
+    reload();
+    setSaving(false);
+  }
+
+  return(
+    <div style={S.invoice}>
+      {/* Header mirrors InvoiceDoc */}
+      <div style={S.invTop}>
+        <div><img src={LOGO} alt="JEI" style={{width:60,height:60,objectFit:"contain"}}/><div style={{fontWeight:800,letterSpacing:".12em",marginTop:8}}>JON EXPRESS INTERNATIONAL</div>
+          <div style={{fontSize:12,color:"var(--ink-3)"}}>Freight forwarding · US → SG → ID</div></div>
+        <div style={{textAlign:"right"}}><div style={{fontFamily:"var(--display)",fontSize:22,fontWeight:800,color:"var(--navy)"}}>COST REVIEW</div>
+          <div style={{fontFamily:"var(--mono)",fontSize:13,marginTop:4}}>{invNo}</div></div>
       </div>
-      <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
-        <button style={S.secBtn} onClick={()=>{setShowForm(false);setEditId(null);setForm(blank);}}>Cancel</button>
-        <button style={{...S.printBtn,opacity:(!form.label||!form.amount)?0.5:1}} onClick={save} disabled={!form.label||!form.amount||busy}>
-          {busy?"Saving…":editId?"Save changes":"Add cost"}
+      <div style={S.invMeta}>
+        <div><div style={S.dLabel}>Customer</div><div style={{fontWeight:700,fontSize:15}}>{custName(order.customer_id)}</div></div>
+        <div><div style={S.dLabel}>Shipment</div><div>{order.shipment_id} · {c?.name}</div></div>
+        <div><div style={S.dLabel}>Status</div><div style={{color:"var(--warn)",fontWeight:600}}>Invoiced</div></div>
+        <div><div style={S.dLabel}>Payment</div><div className={"paybadge pay-"+(s?.payment??"Unpaid")} style={{display:"inline-block"}}>{s?.payment??"Unpaid"}</div></div>
+      </div>
+
+      {/* Revenue section (read-only, from invoice) */}
+      <div style={{fontSize:12,fontWeight:700,color:"var(--ink-3)",letterSpacing:".04em",marginBottom:6,marginTop:4}}>REVENUE (from invoice)</div>
+      <div style={S.invTableHead}><span style={{flex:3}}>Description</span><span style={{flex:1,textAlign:"right"}}>Amount</span><span style={{flex:1,textAlign:"right"}}>In IDR</span><span style={{width:28}}/></div>
+      {q.feeLines.map((l,i)=>(
+        <div key={i} style={S.invLine}>
+          <span style={{flex:3}}>{l.label}</span>
+          <span style={{flex:1,textAlign:"right"}}>{fmtOrig(l.amount,l.currency)}</span>
+          <span style={{flex:1,textAlign:"right",fontWeight:600}}>{fmtIDR(toIDR(l.amount,l.currency))}</span>
+          <span style={{width:28}}/>
+        </div>
+      ))}
+      {(order.order_extra_fees||[]).map((ef,i)=>{
+        const qty=+ef.qty||1;const total=(+ef.amount||0)*qty;
+        const label=qty>1?`${ef.label||"Extra"} ×${qty}`:(ef.label||"Extra");
+        return(<div key={"oef"+i} style={S.invLine}><span style={{flex:3,color:"var(--ink-2)"}}>{label}</span>
+          <span style={{flex:1,textAlign:"right"}}>{fmtOrig(total,ef.currency)}</span>
+          <span style={{flex:1,textAlign:"right",fontWeight:600}}>{fmtIDR(toIDR(total,ef.currency))}</span><span style={{width:28}}/></div>);
+      })}
+      {(order.extra_costs||[]).map((ec,i)=>(
+        <div key={"ec"+i} style={S.invLine}><span style={{flex:3,color:"var(--ink-2)"}}>{ec.label}</span>
+          <span style={{flex:1,textAlign:"right"}}>{fmtOrig(ec.amount,ec.currency)}</span>
+          <span style={{flex:1,textAlign:"right",fontWeight:600}}>{fmtIDR(toIDR(ec.amount,ec.currency))}</span><span style={{width:28}}/></div>
+      ))}
+      <div style={{...S.invLine,fontWeight:700,color:"var(--navy)",borderTop:"2px solid var(--line)"}}>
+        <span style={{flex:3}}>Total Revenue</span><span style={{flex:1}}/><span style={{flex:1,textAlign:"right",fontSize:15}}>{fmtIDR(revenueIDR)}</span><span style={{width:28}}/>
+      </div>
+
+      {/* Cost section — add/delete lines */}
+      <div style={{...S.addCostBox,borderColor:"var(--bad)"}}>
+        <div style={{fontSize:12,fontWeight:700,color:"var(--bad)",letterSpacing:".04em",marginBottom:8}}>COSTS (deducted from revenue)</div>
+        {orderCosts.map((c,i)=>(
+          <div key={c.id} style={{...S.invLine,background:"var(--bad-bg)"}}>
+            <span style={{flex:3,color:"var(--bad)"}}>{c.label}</span>
+            <span style={{flex:1,textAlign:"right",color:"var(--bad)"}}>{fmtOrig(c.amount,c.currency)}</span>
+            <span style={{flex:1,textAlign:"right",fontWeight:600,color:"var(--bad)"}}>−{fmtIDR(toIDR(c.amount,c.currency))}</span>
+            <button onClick={()=>removeCost(c.id)} style={{width:28,background:"transparent",border:"none",color:"var(--bad)",cursor:"pointer",padding:2}}><Trash2 size={13}/></button>
+          </div>
+        ))}
+        <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:8}}>
+          <input style={{...S.input,flex:2,minWidth:140}} placeholder="Cost description (e.g. Shipping cost, Customs...)" value={newCostLabel} onChange={e=>setNewCostLabel(e.target.value)}/>
+          <input style={{...S.input,width:110}} type="number" placeholder="Amount" value={newCostAmt} onChange={e=>setNewCostAmt(e.target.value)}/>
+          <select style={{...S.input,width:80}} value={newCostCur} onChange={e=>setNewCostCur(e.target.value)}>
+            <option value="USD">USD</option><option value="SGD">SGD</option><option value="IDR">IDR</option>
+          </select>
+          <button style={{...S.printBtn,background:"var(--bad)"}} onClick={addCost}><Plus size={13}/> Add cost</button>
+        </div>
+      </div>
+
+      {/* Conversion rates */}
+      <div style={S.addCostBox}>
+        <div style={{fontSize:12,fontWeight:700,color:"var(--ink-3)",letterSpacing:".04em",marginBottom:8}}>CONVERSION RATES (this order only)</div>
+        <div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"flex-end"}}>
+          <label style={{flex:1,minWidth:140}}><span style={{display:"block",fontSize:12,color:"var(--ink-3)",marginBottom:4}}>USD → IDR</span>
+            <input style={S.input} type="number" value={usdRate} onChange={e=>setUsdRate(e.target.value)} placeholder={`e.g. ${ctx.liveFx?.usd_idr||15850}`}/></label>
+          <label style={{flex:1,minWidth:140}}><span style={{display:"block",fontSize:12,color:"var(--ink-3)",marginBottom:4}}>SGD → IDR</span>
+            <input style={S.input} type="number" value={sgdRate} onChange={e=>setSgdRate(e.target.value)} placeholder={`e.g. ${ctx.liveFx?.sgd_idr||11900}`}/></label>
+          <button style={S.printBtn} onClick={saveRates} disabled={saving}>{saving?"Saving…":"Save rates"}</button>
+        </div>
+      </div>
+
+      {/* Net profit summary */}
+      <div style={{display:"flex",gap:0,flexDirection:"column",marginBottom:8}}>
+        <div style={{display:"flex",justifyContent:"space-between",padding:"8px 0",fontSize:13,color:"var(--ink-2)"}}>
+          <span>Revenue</span><span style={{fontWeight:600,color:"var(--navy)"}}>{fmtIDR(revenueIDR)}</span>
+        </div>
+        <div style={{display:"flex",justifyContent:"space-between",padding:"8px 0",fontSize:13,color:"var(--bad)"}}>
+          <span>Total costs</span><span style={{fontWeight:600}}>−{fmtIDR(costsIDR)}</span>
+        </div>
+        <div style={{display:"flex",justifyContent:"space-between",padding:"10px 0",fontSize:17,fontWeight:800,borderTop:"2px solid var(--line)",color:netIDR>=0?"var(--good)":"var(--bad)"}}>
+          <span>Net Profit</span><span style={{fontFamily:"var(--display)"}}>{fmtIDR(netIDR)}</span>
+        </div>
+      </div>
+
+      <div style={S.invFoot}>
+        <button style={S.secBtn} onClick={onClose}>← Back</button>
+        <button style={{...S.printBtn,background:"var(--good)",color:"#fff",fontSize:14,padding:"10px 20px"}} onClick={doComplete} disabled={saving}>
+          <Check size={14}/> {saving?"Completing…":"Complete"}
         </button>
       </div>
-    </div>}
-
-    {/* Cost entries table */}
-    {filtered.length===0
-      ? <div style={S.empty}>{entries.length===0?"No costs recorded yet.":"No entries match your search."}</div>
-      : <div style={{background:"var(--card)",border:"1px solid var(--line)",borderRadius:12,overflow:"hidden"}}>
-          <div style={{display:"flex",gap:10,padding:"9px 14px",background:"var(--head)",borderBottom:"1px solid var(--line)",fontSize:11,fontWeight:700,color:"var(--ink-3)",textTransform:"uppercase",letterSpacing:".06em"}}>
-            <span style={{flex:3}}>Description</span>
-            <span style={{flex:1.5}}>Shipment</span>
-            <span style={{flex:1}}>Date</span>
-            <span style={{flex:1,textAlign:"right"}}>Amount</span>
-            <span style={{flex:1,textAlign:"right"}}>In IDR</span>
-            <span style={{width:60}}/>
-          </div>
-          {filtered.map(e=>(
-            <div key={e.id} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",borderBottom:"1px solid var(--line)",fontSize:13}}>
-              <div style={{flex:3}}>
-                <div style={{fontWeight:600}}>{e.label}</div>
-                {e.notes&&<div style={{fontSize:11.5,color:"var(--ink-3)",marginTop:2}}>{e.notes}</div>}
-              </div>
-              <span style={{flex:1.5,fontSize:12,color:"var(--ink-3)",fontFamily:"var(--mono)"}}>{e.shipment_id||"—"}</span>
-              <span style={{flex:1,fontSize:12,color:"var(--ink-3)"}}>{e.cost_date?new Date(e.cost_date).toLocaleDateString("en-GB"):"—"}</span>
-              <span style={{flex:1,textAlign:"right",fontWeight:600}}>{fmtO(e.amount,e.currency)}</span>
-              <span style={{flex:1,textAlign:"right",color:"var(--bad)",fontWeight:600}}>−{fmtIDR(toIDR(e.amount,e.currency))}</span>
-              <div style={{width:60,display:"flex",gap:4,justifyContent:"flex-end"}}>
-                <button onClick={()=>startEdit(e)} style={{background:"transparent",border:"none",color:"var(--ink-3)",cursor:"pointer",padding:4}}><Pencil size={13}/></button>
-                <button onClick={()=>del(e.id)} style={{background:"transparent",border:"none",color:"var(--bad)",cursor:"pointer",padding:4}}><Trash2 size={13}/></button>
-              </div>
-            </div>
-          ))}
-          <div style={{display:"flex",justifyContent:"flex-end",padding:"10px 14px",borderTop:"1px solid var(--line)",fontWeight:700,fontSize:13,color:"var(--bad)"}}>
-            Total costs: −{fmtIDR(totalIDR)}
-          </div>
-        </div>
-    }
-  </>);
+    </div>
+  );
 }
 
 function Completed({ctx}){
