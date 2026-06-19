@@ -930,7 +930,7 @@ function CostDoc({ctx,order,reload,onClose}){
       {/* Cost section — add/delete lines */}
       <div style={{...S.addCostBox,borderColor:"var(--bad)"}}>
         <div style={{fontSize:12,fontWeight:700,color:"var(--bad)",letterSpacing:".04em",marginBottom:8}}>COSTS (deducted from revenue)</div>
-        {orderCosts.map((c,i)=>(
+        {localCosts.map((c,i)=>(
           <div key={c.id} style={{...S.invLine,background:"var(--bad-bg)"}}>
             <span style={{flex:3,color:"var(--bad)"}}>{c.label}</span>
             <span style={{flex:1,textAlign:"right",color:"var(--bad)"}}>{fmtOrig(c.amount,c.currency)}</span>
