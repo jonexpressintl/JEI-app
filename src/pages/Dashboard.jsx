@@ -130,7 +130,7 @@ export default function Dashboard() {
     return shipCostIDR(o.shipment_id) * (Number(o.sell_idr)/tot);
   };
 
-  const ctx = { D, isOwner, custName, custRate, courierOf, shipmentOf, costsFor, quote, orderCostIDR, shipCostIDR, reload: D.reload, patchOrder: D.patchOrder, liveFx };
+  const ctx = { D, isOwner, custName, custRate, courierOf, shipmentOf, costsFor, quote, orderCostIDR, shipCostIDR, reload: D.reload, patchOrder: D.patchOrder, liveFx, refreshFx };
   const TABS = [
     {k:"orders",label:"Orders",icon:LayoutGrid},
     {k:"shipments",label:"Shipments",icon:Boxes},
@@ -187,7 +187,7 @@ export default function Dashboard() {
 
       <footer style={S.footer}>
         {isOwner ? "Full financial visibility" : "Operations & pricing — landed cost / margin hidden by database policy"}
-        {" · "}FX 1 USD={Number(D.fx.usd_idr).toLocaleString()} · 1 SGD={Number(D.fx.sgd_idr).toLocaleString()} IDR
+        {" · "}FX 1 USD={(liveFx?.usd_idr||D.fx?.usd_idr||15850).toLocaleString()} · 1 SGD={(liveFx?.sgd_idr||D.fx?.sgd_idr||11900).toLocaleString()} IDR
       </footer>
     </div>
   );
@@ -737,7 +737,13 @@ function InvoiceDoc({ctx,order,onComplete,reload}){
 
       {/* Conversion rates */}
       <div style={S.addCostBox}>
-        <div style={{fontSize:12,fontWeight:700,color:"var(--ink-3)",letterSpacing:".04em",marginBottom:8}}>CONVERSION RATES (this invoice only)</div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+          <span style={{fontSize:12,fontWeight:700,color:"var(--ink-3)",letterSpacing:".04em"}}>CONVERSION RATES (this invoice only)</span>
+          {ctx.liveFx?.live && <button onClick={()=>{setUsdRate(String(ctx.liveFx.usd_idr));setSgdRate(String(ctx.liveFx.sgd_idr));}}
+            style={{...S.secBtn,fontSize:11,padding:"4px 9px",display:"flex",alignItems:"center",gap:4}}>
+            <RefreshCw size={11}/> Use live rate ({ctx.liveFx.usd_idr?.toLocaleString()})
+          </button>}
+        </div>
         <div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"flex-end"}}>
           <label style={{flex:1,minWidth:140}}><span style={{display:"block",fontSize:12,color:"var(--ink-3)",marginBottom:4}}>USD → IDR</span>
             <input style={S.input} type="number" value={usdRate} onChange={e=>setUsdRate(e.target.value)} placeholder={`e.g. ${ctx.liveFx?.usd_idr||15850}`}/></label>
@@ -812,7 +818,7 @@ function Costs({ctx}){
 }
 
 function CostDoc({ctx,order,reload,onClose}){
-  const {D,custName,courierOf,shipmentOf,quote}=ctx;
+  const {D,custName,courierOf,shipmentOf,quote,patchOrder}=ctx;
   if(!order) return null;
   const q=quote(order);
   const s=shipmentOf(order.shipment_id);
@@ -820,13 +826,13 @@ function CostDoc({ctx,order,reload,onClose}){
   const customer=D.customers.find(cu=>cu.id===order.customer_id);
   const invNo="INV-"+order.id.replace("ORD-","");
 
-  // Per-order conversion rates (default to saved invoice rates)
-  const [usdRate,setUsdRate]=useState(order.invoice_usd_rate||"");
-  const [sgdRate,setSgdRate]=useState(order.invoice_sgd_rate||"");
+  const [usdRate,setUsdRate]=useState(String(order.invoice_usd_rate||""));
+  const [sgdRate,setSgdRate]=useState(String(order.invoice_sgd_rate||""));
   const [saving,setSaving]=useState(false);
+  const [reverting,setReverting]=useState(false);
 
-  // Cost lines for this order
-  const orderCosts=(D.costEntries||[]).filter(e=>e.order_id===order.id);
+  // Local cost entries — start from DB, update optimistically
+  const [localCosts,setLocalCosts]=useState(()=>(D.costEntries||[]).filter(e=>e.order_id===order.id));
   const [newCostLabel,setNewCostLabel]=useState("");
   const [newCostAmt,setNewCostAmt]=useState("");
   const [newCostCur,setNewCostCur]=useState("USD");
@@ -836,30 +842,39 @@ function CostDoc({ctx,order,reload,onClose}){
   const toIDR=(amt,cur)=>cur==="USD"?(+amt||0)*fxU:cur==="SGD"?(+amt||0)*fxS:(+amt||0);
   const fmtOrig=(amt,cur)=>cur==="USD"?`$${Number(amt||0).toFixed(2)}`:cur==="SGD"?`S$${Number(amt||0).toFixed(2)}`:fmtIDR(amt||0);
 
-  // Revenue = all fee lines + order extras + invoice extras
   const extraFeesIDR=(order.order_extra_fees||[]).reduce((a,ef)=>{const qty=+ef.qty||1;return a+toIDR((+ef.amount||0)*qty,ef.currency||"USD");},0);
   const invoiceFeesIDR=(order.extra_costs||[]).reduce((a,ec)=>a+toIDR(+ec.amount||0,ec.currency||"IDR"),0);
   const revenueIDR=q.feeLines.reduce((a,l)=>a+toIDR(l.amount,l.currency),0)+extraFeesIDR+invoiceFeesIDR;
-
-  // Costs = cost entries linked to this order
-  const costsIDR=orderCosts.reduce((a,c)=>a+toIDR(c.amount,c.currency),0);
+  const costsIDR=localCosts.reduce((a,c)=>a+toIDR(c.amount,c.currency),0);
   const netIDR=revenueIDR-costsIDR;
 
   async function addCost(){
     if(!newCostLabel.trim()||!newCostAmt) return;
-    await addCostEntry({label:newCostLabel.trim(),amount:+newCostAmt,currency:newCostCur,order_id:order.id,cost_date:new Date().toISOString().slice(0,10)});
+    const entry={label:newCostLabel.trim(),amount:+newCostAmt,currency:newCostCur,order_id:order.id,cost_date:new Date().toISOString().slice(0,10)};
+    const {data}=await addCostEntry(entry);
+    // Optimistic: add to local state immediately, no full reload
+    const newEntry=data?.[0]??{...entry,id:"tmp-"+Date.now()};
+    setLocalCosts(prev=>[...prev,newEntry]);
     setNewCostLabel("");setNewCostAmt("");
-    reload();
   }
   async function removeCost(id){
+    // Optimistic remove first, then DB
+    setLocalCosts(prev=>prev.filter(c=>c.id!==id));
     await deleteCostEntry(id);
-    reload();
   }
   async function saveRates(){
     setSaving(true);
     await updateOrder(order.id,{invoice_usd_rate:+usdRate||null,invoice_sgd_rate:+sgdRate||null});
+    // Patch local order state so totals update without reload
+    patchOrder&&patchOrder(order.id,{invoice_usd_rate:+usdRate||null,invoice_sgd_rate:+sgdRate||null});
     setSaving(false);
+  }
+  async function doRevert(){
+    setReverting(true);
+    await updateOrder(order.id,{invoiced:false,invoiced_at:null});
+    onClose();
     reload();
+    setReverting(false);
   }
   async function doComplete(){
     setSaving(true);
@@ -935,7 +950,13 @@ function CostDoc({ctx,order,reload,onClose}){
 
       {/* Conversion rates */}
       <div style={S.addCostBox}>
-        <div style={{fontSize:12,fontWeight:700,color:"var(--ink-3)",letterSpacing:".04em",marginBottom:8}}>CONVERSION RATES (this order only)</div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+          <span style={{fontSize:12,fontWeight:700,color:"var(--ink-3)",letterSpacing:".04em"}}>CONVERSION RATES (this order only)</span>
+          {ctx.liveFx?.live && <button onClick={()=>{setUsdRate(String(ctx.liveFx.usd_idr));setSgdRate(String(ctx.liveFx.sgd_idr));}}
+            style={{...S.secBtn,fontSize:11,padding:"4px 9px",display:"flex",alignItems:"center",gap:4}}>
+            <RefreshCw size={11}/> Use live rate ({ctx.liveFx.usd_idr?.toLocaleString()})
+          </button>}
+        </div>
         <div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"flex-end"}}>
           <label style={{flex:1,minWidth:140}}><span style={{display:"block",fontSize:12,color:"var(--ink-3)",marginBottom:4}}>USD → IDR</span>
             <input style={S.input} type="number" value={usdRate} onChange={e=>setUsdRate(e.target.value)} placeholder={`e.g. ${ctx.liveFx?.usd_idr||15850}`}/></label>
@@ -959,7 +980,12 @@ function CostDoc({ctx,order,reload,onClose}){
       </div>
 
       <div style={S.invFoot}>
-        <button style={S.secBtn} onClick={onClose}>← Back</button>
+        <div style={{display:"flex",gap:8}}>
+          <button style={S.secBtn} onClick={onClose}>← Back</button>
+          <button style={{...S.secBtn,color:"var(--warn)",borderColor:"var(--warn)"}} onClick={doRevert} disabled={reverting}>
+            <RefreshCw size={13}/> {reverting?"Reverting…":"Revert to invoice"}
+          </button>
+        </div>
         <button style={{...S.printBtn,background:"var(--good)",color:"#fff",fontSize:14,padding:"10px 20px"}} onClick={doComplete} disabled={saving}>
           <Check size={14}/> {saving?"Completing…":"Complete"}
         </button>
@@ -998,7 +1024,8 @@ function Completed({ctx}){
   // Revert to active invoice (keeps data)
   async function doRevert(orderId){
     setBusy(true);
-    await updateOrder(orderId,{completed:false,completed_at:null});
+    // Keep invoiced=true so order goes back to Costs tab, not Invoices
+    await updateOrder(orderId,{completed:false,completed_at:null,invoiced:true});
     setDelId(null); setOpenId(null);
     reload(); setBusy(false);
   }
@@ -1182,7 +1209,7 @@ function Completed({ctx}){
                 </button>
                 <button style={{...S.secBtn,color:"var(--bad)",borderColor:"var(--bad)"}}
                   onClick={()=>setDelId(o.id)}>
-                  <RefreshCw size={13}/> Revert to invoice
+                  <RefreshCw size={13}/> Revert to cost
                 </button>
                 <button style={S.printBtn} onClick={dlPDF}>
                   <Download size={13}/> Download PDF
@@ -1194,9 +1221,9 @@ function Completed({ctx}){
       })}
     </div>
 
-    {delId && <ConfirmDialog title="Revert to invoice?"
-      message="This moves the order back to active Invoices. All data is kept — nothing is deleted."
-      confirmLabel={busy?"Moving…":"Revert to invoice"} busy={busy}
+    {delId && <ConfirmDialog title="Revert to cost review?"
+      message="This moves the order back to the Costs tab for further review. All data is kept — nothing is deleted."
+      confirmLabel={busy?"Moving…":"Revert to cost"} busy={busy}
       onConfirm={()=>doRevert(delId)} onCancel={()=>setDelId(null)}/>}
 
     {hardDelId && <ConfirmDialog danger title="Permanently delete this order?"
@@ -1208,65 +1235,103 @@ function Completed({ctx}){
 
 // ──────────── FINANCE (owner only) ────────────
 function Finance({ctx}){
-  const {D,isOwner,custName,shipmentOf,courierOf,costsFor,orderCostIDR}=ctx;
+  const {D,isOwner,custName,shipmentOf,quote}=ctx;
   if(!isOwner) return null;
-  const fx=D.fx_rates?.[0]??{usd_idr:15850,sgd_idr:11900};
 
-  const totalRev=D.orders.reduce((a,o)=>a+Number(o.sell_idr||0),0);
-  const totalCost=D.orders.reduce((a,o)=>a+orderCostIDR(o),0);
+  const fxU=ctx.liveFx?.usd_idr||15850;
+  const fxS=ctx.liveFx?.sgd_idr||11900;
+  const toIDR=(amt,cur)=>cur==="USD"?(+amt||0)*fxU:cur==="SGD"?(+amt||0)*fxS:(+amt||0);
+
+  // Only completed orders are "settled" — use their locked sell_idr or recompute
+  const completed=D.orders.filter(o=>o.completed);
+
+  // Revenue per order: use locked sell_idr if set, else recompute from feeLines
+  function orderRevenue(o){
+    if(+o.sell_idr) return +o.sell_idr;
+    const oFxU=+o.invoice_usd_rate||fxU;
+    const oFxS=+o.invoice_sgd_rate||fxS;
+    const toI=(amt,cur)=>cur==="USD"?(+amt||0)*oFxU:cur==="SGD"?(+amt||0)*oFxS:(+amt||0);
+    const eQ=(o.order_extra_fees||[]).reduce((a,ef)=>{const qty=+ef.qty||1;return a+toI((+ef.amount||0)*qty,ef.currency||"USD");},0);
+    const iQ=(o.extra_costs||[]).reduce((a,ec)=>a+toI(+ec.amount||0,ec.currency||"IDR"),0);
+    return quote(o).feeLines.reduce((a,l)=>a+toI(l.amount,l.currency),0)+eQ+iQ;
+  }
+
+  // Cost per order: sum cost entries linked to this order
+  function orderCostTotal(o){
+    const oFxU=+o.invoice_usd_rate||fxU;
+    const oFxS=+o.invoice_sgd_rate||fxS;
+    const toI=(amt,cur)=>cur==="USD"?(+amt||0)*oFxU:cur==="SGD"?(+amt||0)*oFxS:(+amt||0);
+    return (D.costEntries||[]).filter(e=>e.order_id===o.id).reduce((a,c)=>a+toI(c.amount,c.currency),0);
+  }
+
+  const totalRev=completed.reduce((a,o)=>a+orderRevenue(o),0);
+  const totalCost=completed.reduce((a,o)=>a+orderCostTotal(o),0);
   const profit=totalRev-totalCost;
   const margin=totalRev>0?((profit/totalRev)*100):0;
 
-  const delivered=D.orders.filter(o=>shipmentOf(o.shipment_id)?.stage==="Delivered to customer");
-  const paidOrders=delivered.filter(o=>shipmentOf(o.shipment_id)?.payment==="Paid");
-  const unpaidOrders=delivered.filter(o=>shipmentOf(o.shipment_id)?.payment!=="Paid");
-  const paidRev=paidOrders.reduce((a,o)=>a+Number(o.sell_idr||0),0);
-  const unpaidRev=unpaidOrders.reduce((a,o)=>a+Number(o.sell_idr||0),0);
-  const invoicedOrders=delivered.filter(o=>shipmentOf(o.shipment_id)?.payment==="Invoiced");
-
   return(<>
     <div style={S.sectionLead}><h2 style={S.h2}>Finance</h2>
-      <p style={S.lead}>Revenue, costs, and invoice status across all orders. Costs come from shipment cost entries; margin is calculated after FX conversion.</p></div>
+      <p style={S.lead}>Summary of completed orders — revenue earned, operational costs deducted, and net profit. Only completed orders are counted.</p></div>
 
     <section style={S.kpis}>
-      <Kpi label="Revenue" value={fmtShort(totalRev)} sub="total sell value" accent/>
-      <Kpi label="Cost" value={fmtShort(totalCost)} sub="shipment costs (IDR)"/>
-      <Kpi label="Profit" value={fmtShort(profit)} sub={profit>=0?"above breakeven":"below breakeven"} accent={profit>=0} warn={profit<0}/>
-      <Kpi label="Margin" value={`${margin.toFixed(1)}%`} sub="profit / revenue" accent={margin>0}/>
+      <Kpi label="Revenue" value={fmtShort(totalRev)} sub={`${completed.length} completed orders`} accent/>
+      <Kpi label="Total costs" value={fmtShort(totalCost)} sub="operational expenses" warn={totalCost>0}/>
+      <Kpi label="Net profit" value={fmtShort(profit)} sub={profit>=0?"above breakeven":"below breakeven"} accent={profit>=0} warn={profit<0}/>
+      <Kpi label="Margin" value={`${margin.toFixed(1)}%`} sub="profit ÷ revenue" accent={margin>20} warn={margin<0}/>
     </section>
 
-    <h3 style={{...S.h2,fontSize:16,marginTop:24,marginBottom:12}}>Invoice status</h3>
-    <section style={S.kpis}>
-      <Kpi label="Delivered" value={delivered.length} sub={`${fmtShort(delivered.reduce((a,o)=>a+Number(o.sell_idr||0),0))} total`}/>
-      <Kpi label="Paid" value={paidOrders.length} sub={fmtShort(paidRev)} accent/>
-      <Kpi label="Invoiced (unpaid)" value={invoicedOrders.length} sub={fmtShort(invoicedOrders.reduce((a,o)=>a+Number(o.sell_idr||0),0))} warn={invoicedOrders.length>0}/>
-      <Kpi label="Not yet invoiced" value={unpaidOrders.filter(o=>shipmentOf(o.shipment_id)?.payment==="Unpaid").length} sub="delivered but no invoice" warn/>
-    </section>
-
-    {unpaidOrders.length>0 && (<>
-      <h3 style={{...S.h2,fontSize:16,marginTop:24,marginBottom:12}}>Outstanding ({unpaidOrders.length})</h3>
-      <div style={{display:"flex",flexDirection:"column",gap:8}}>
-        {unpaidOrders.map(o=>{
-          const s=shipmentOf(o.shipment_id);
-          return(
-            <div key={o.id} style={{...S.shipCard,padding:14,display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8}}>
-              <div>
-                <span style={{fontFamily:"var(--mono)",fontWeight:700,fontSize:13}}>{o.id}</span>
-                <span style={{marginLeft:10,fontWeight:600}}>{custName(o.customer_id)}</span>
-                <span style={{marginLeft:10,fontSize:12.5,color:"var(--ink-3)"}}>{o.product}</span>
-              </div>
-              <div style={{display:"flex",alignItems:"center",gap:12}}>
-                <span className={"paybadge pay-"+(s?.payment??"Unpaid")}>{s?.payment??"Unpaid"}</span>
-                <span style={{fontFamily:"var(--display)",fontWeight:700,color:"var(--navy)"}}>{fmtIDR(Number(o.sell_idr||0))}</span>
-              </div>
+    <h3 style={{...S.h2,fontSize:16,marginTop:24,marginBottom:12}}>Completed orders ({completed.length})</h3>
+    {completed.length===0 && <div style={S.empty}>No completed orders yet.</div>}
+    <div style={{background:"var(--card)",border:"1px solid var(--line)",borderRadius:12,overflow:"hidden"}}>
+      {completed.length>0 && <div style={{display:"flex",gap:10,padding:"9px 16px",background:"var(--head)",borderBottom:"1px solid var(--line)",fontSize:11,fontWeight:700,color:"var(--ink-3)",textTransform:"uppercase",letterSpacing:".06em"}}>
+        <span style={{flex:2}}>Order / Customer</span>
+        <span style={{flex:1}}>Completed</span>
+        <span style={{flex:1,textAlign:"right"}}>Revenue</span>
+        <span style={{flex:1,textAlign:"right",color:"var(--bad)"}}>Costs</span>
+        <span style={{flex:1,textAlign:"right"}}>Profit</span>
+        <span style={{flex:0.7,textAlign:"right"}}>Margin</span>
+      </div>}
+      {completed.sort((a,b)=>(b.completed_at||"").localeCompare(a.completed_at||"")).map(o=>{
+        const rev=orderRevenue(o);
+        const cost=orderCostTotal(o);
+        const net=rev-cost;
+        const mgn=rev>0?((net/rev)*100):0;
+        return(
+          <div key={o.id} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 16px",borderBottom:"1px solid var(--line)",fontSize:13}}>
+            <div style={{flex:2}}>
+              <span style={{fontFamily:"var(--mono)",fontSize:12,color:"var(--ink-3)"}}>{o.id}</span>
+              <span style={{marginLeft:8,fontWeight:600}}>{custName(o.customer_id)}</span>
+              <div style={{fontSize:11.5,color:"var(--ink-3)",marginTop:1}}>{o.product}</div>
             </div>
-          );
-        })}
-      </div>
-      <div style={{marginTop:12,fontFamily:"var(--display)",fontWeight:700,fontSize:16,textAlign:"right",color:"var(--bad)"}}>
-        Total outstanding: {fmtIDR(unpaidRev)}
-      </div>
-    </>)}
+            <span style={{flex:1,fontSize:12,color:"var(--ink-3)"}}>{o.completed_at?new Date(o.completed_at).toLocaleDateString("en-GB"):"—"}</span>
+            <span style={{flex:1,textAlign:"right",fontWeight:600,color:"var(--navy)"}}>{fmtIDR(rev)}</span>
+            <span style={{flex:1,textAlign:"right",color:"var(--bad)"}}>{cost>0?`−${fmtIDR(cost)}`:"—"}</span>
+            <span style={{flex:1,textAlign:"right",fontWeight:700,color:net>=0?"var(--good)":"var(--bad)"}}>{fmtIDR(net)}</span>
+            <span style={{flex:0.7,textAlign:"right"}}>
+              <span style={{fontSize:11,fontWeight:700,padding:"2px 6px",borderRadius:6,
+                background:mgn>=20?"var(--good-bg)":mgn>=0?"var(--warn-bg)":"var(--bad-bg)",
+                color:mgn>=20?"var(--good)":mgn>=0?"var(--warn)":"var(--bad)"}}>
+                {mgn.toFixed(1)}%
+              </span>
+            </span>
+          </div>
+        );
+      })}
+      {completed.length>0 && <div style={{display:"flex",gap:10,padding:"10px 16px",borderTop:"2px solid var(--line)",fontSize:13,fontWeight:700}}>
+        <span style={{flex:2}}>Total</span>
+        <span style={{flex:1}}/>
+        <span style={{flex:1,textAlign:"right",color:"var(--navy)"}}>{fmtIDR(totalRev)}</span>
+        <span style={{flex:1,textAlign:"right",color:"var(--bad)"}}>{totalCost>0?`−${fmtIDR(totalCost)}`:"—"}</span>
+        <span style={{flex:1,textAlign:"right",color:profit>=0?"var(--good)":"var(--bad)"}}>{fmtIDR(profit)}</span>
+        <span style={{flex:0.7,textAlign:"right"}}>
+          <span style={{fontSize:11,fontWeight:700,padding:"2px 6px",borderRadius:6,
+            background:margin>=20?"var(--good-bg)":margin>=0?"var(--warn-bg)":"var(--bad-bg)",
+            color:margin>=20?"var(--good)":margin>=0?"var(--warn)":"var(--bad)"}}>
+            {margin.toFixed(1)}%
+          </span>
+        </span>
+      </div>}
+    </div>
   </>);
 }
 
