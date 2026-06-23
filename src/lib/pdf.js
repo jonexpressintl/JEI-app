@@ -142,7 +142,12 @@ export function generateInvoicePDF(order, customer, shipment, courier, liveFx) {
     if (+order.fee_2) feeLines.push({ label: `Seafreight SIN->JKT (${cbmB.toFixed(2)} CBM)`, amount: sf2Total, currency: order.fee_2_cur || "IDR" });
     if (+order.fee_additional) feeLines.push({ label: "Additional cost", amount: +order.fee_additional, currency: order.fee_additional_cur || "USD" });
   }
-  (order.extra_costs||[]).forEach(ec => feeLines.push({ label: ec.label, amount: +ec.amount, currency: ec.currency || "IDR" }));
+  (order.extra_costs||[]).forEach(ec => {
+    const qty = +ec.qty || 1;
+    const total = (+ec.amount||0) * qty;
+    const label = qty > 1 ? `${ec.label} ×${qty}` : ec.label;
+    feeLines.push({ label, amount: total, currency: ec.currency || "IDR" });
+  });
   (order.order_extra_fees||[]).forEach(ef => {
     const qty = +ef.qty || 1;
     const total = (+ef.amount||0) * qty;

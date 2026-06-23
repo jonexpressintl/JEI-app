@@ -1178,7 +1178,7 @@ function Completed({ctx}){
         const fxS=+o.invoice_sgd_rate||ctx.liveFx?.sgd_idr||11900;
         const toI=(amt,cur)=>cur==="USD"?(+amt||0)*fxU:cur==="SGD"?(+amt||0)*fxS:(+amt||0);
         const eQ=(o.order_extra_fees||[]).reduce((s,ef)=>{const qty=+ef.qty||1;return s+toI((+ef.amount||0)*qty,ef.currency||"USD");},0);
-        const iQ=(o.extra_costs||[]).reduce((s,ec)=>s+toI(+ec.amount||0,ec.currency||"IDR"),0);
+        const iQ=(o.extra_costs||[]).reduce((s,ec)=>{const qty=+ec.qty||1;return s+toI((+ec.amount||0)*qty,ec.currency||"IDR");},0);
         const total=+o.sell_idr||(quote(o).feeLines.reduce((s,l)=>s+toI(l.amount,l.currency),0)+eQ+iQ);
         return a+total;
       },0)/1e6)+"jt"} sub="from completed"/>
@@ -1214,7 +1214,7 @@ function Completed({ctx}){
         const fxS=+o.invoice_sgd_rate||ctx.liveFx?.sgd_idr||11900;
         const toIDR=(amt,cur)=>cur==="USD"?(+amt||0)*fxU:cur==="SGD"?(+amt||0)*fxS:(+amt||0);
         const extraQ=(o.order_extra_fees||[]).reduce((a,ef)=>{const qty=+ef.qty||1;return a+toIDR((+ef.amount||0)*qty,ef.currency||"USD");},0);
-        const invoiceQ=(o.extra_costs||[]).reduce((a,ec)=>a+toIDR(+ec.amount||0,ec.currency||"IDR"),0);
+        const invoiceQ=(o.extra_costs||[]).reduce((a,ec)=>{const qty=+ec.qty||1;return a+toIDR((+ec.amount||0)*qty,ec.currency||"IDR");},0);
         const totalIDR=+o.sell_idr||(q2.feeLines.reduce((a,l)=>a+toIDR(l.amount,l.currency),0)+extraQ+invoiceQ);
         const completedDate=o.completed_at?new Date(o.completed_at).toLocaleDateString("en-GB"):"—";
         const orderDate=o.order_date?new Date(o.order_date).toLocaleDateString("en-GB"):"—";
@@ -1377,7 +1377,7 @@ function Finance({ctx}){
     const oFxS=+o.invoice_sgd_rate||fxS;
     const toI=(amt,cur)=>cur==="USD"?(+amt||0)*oFxU:cur==="SGD"?(+amt||0)*oFxS:(+amt||0);
     const eQ=(o.order_extra_fees||[]).reduce((a,ef)=>{const qty=+ef.qty||1;return a+toI((+ef.amount||0)*qty,ef.currency||"USD");},0);
-    const iQ=(o.extra_costs||[]).reduce((a,ec)=>a+toI(+ec.amount||0,ec.currency||"IDR"),0);
+    const iQ=(o.extra_costs||[]).reduce((a,ec)=>{const qty=+ec.qty||1;return a+toI((+ec.amount||0)*qty,ec.currency||"IDR");},0);
     return quote(o).feeLines.reduce((a,l)=>a+toI(l.amount,l.currency),0)+eQ+iQ;
   }
 
