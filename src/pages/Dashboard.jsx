@@ -1040,11 +1040,13 @@ function CostDoc({ctx,order,reload,onClose}){
           <span style={{flex:1,textAlign:"right"}}>{fmtOrig(total,ef.currency)}</span>
           <span style={{flex:1,textAlign:"right",fontWeight:600}}>{fmtIDR(toIDR(total,ef.currency))}</span><span style={{width:28}}/></div>);
       })}
-      {(order.extra_costs||[]).map((ec,i)=>(
-        <div key={"ec"+i} style={S.invLine}><span style={{flex:3,color:"var(--ink-2)"}}>{ec.label}</span>
-          <span style={{flex:1,textAlign:"right"}}>{fmtOrig(ec.amount,ec.currency)}</span>
-          <span style={{flex:1,textAlign:"right",fontWeight:600}}>{fmtIDR(toIDR(ec.amount,ec.currency))}</span><span style={{width:28}}/></div>
-      ))}
+      {(order.extra_costs||[]).map((ec,i)=>{
+        const qty=+ec.qty||1; const total=(+ec.amount||0)*qty;
+        const label=qty>1?`${ec.label} ×${qty}`:ec.label;
+        return(<div key={"ec"+i} style={S.invLine}><span style={{flex:3,color:"var(--ink-2)"}}>{label}</span>
+          <span style={{flex:1,textAlign:"right"}}>{fmtOrig(total,ec.currency)}</span>
+          <span style={{flex:1,textAlign:"right",fontWeight:600}}>{fmtIDR(toIDR(total,ec.currency))}</span><span style={{width:28}}/></div>);
+      })}
       <div style={{...S.invLine,fontWeight:700,color:"var(--navy)",borderTop:"2px solid var(--line)"}}>
         <span style={{flex:3}}>Total Revenue</span><span style={{flex:1}}/><span style={{flex:1,textAlign:"right",fontSize:15}}>{fmtIDR(revenueIDR)}</span><span style={{width:28}}/>
       </div>
