@@ -103,12 +103,11 @@ export default function Dashboard() {
         return charged;
       };
       const airKgQ = getKg(airBasis);
-      const seaKgQ = getKg(seaBasis);
       const airTotalQ = (+o.fee_1||0) * airKgQ;
-      const seaTotalQ = (+o.fee_2||0) * seaKgQ;
+      const seaCBMTotal = (+o.fee_2||0) * cbmB; // sea leg is CBM-based, not kg-based
       if (+o.fee_1) feeLines.push({ label: `Airfreight (${airKgQ.toFixed(1)} kg × ${o.fee_1_cur==="USD"?"$":o.fee_1_cur==="SGD"?"S$":"Rp"}${(+o.fee_1).toLocaleString()}, ${airBasis})`, amount: airTotalQ, currency: o.fee_1_cur || "USD" });
       if (+o.fee_clearance) feeLines.push({ label: "Clearance fee", amount: +o.fee_clearance, currency: o.fee_clearance_cur || "SGD" });
-      if (+o.fee_2) feeLines.push({ label: `Seafreight (${seaKgQ.toFixed(1)} kg × ${o.fee_2_cur==="USD"?"$":o.fee_2_cur==="SGD"?"S$":"Rp"}${(+o.fee_2).toLocaleString()}, ${seaBasis})`, amount: seaTotalQ, currency: o.fee_2_cur || "IDR" });
+      if (+o.fee_2) feeLines.push({ label: `Seafreight SIN→JKT (${cbmB.toFixed(4)} m³ × ${o.fee_2_cur==="USD"?"$":o.fee_2_cur==="SGD"?"S$":"Rp"}${(+o.fee_2).toLocaleString()}/CBM)`, amount: seaCBMTotal, currency: o.fee_2_cur || "IDR" });
       if (+o.fee_additional) feeLines.push({ label: "Additional cost", amount: +o.fee_additional, currency: o.fee_additional_cur || "USD" });
     } else { // sea_sea
       if (+o.fee_1) feeLines.push({ label: `Seafreight USA→SIN (${cbmA.toFixed(2)} CBM × ${(+o.fee_1).toLocaleString()})`, amount: sf1Total, currency: o.fee_1_cur || "USD" });

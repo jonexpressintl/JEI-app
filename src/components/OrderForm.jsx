@@ -445,26 +445,22 @@ export default function OrderForm({ ctx, order, onClose, onSaved }) {
                   </div>
                   <div style={S.totalBar}><span>Air: {fmtFee(+f.fee_1,f.fee_1_cur)}/kg × {airKg.toFixed(1)} kg = {fmtFee((+f.fee_1||0)*airKg,f.fee_1_cur)}</span></div>
 
-                  {/* Sea leg — rate per kg with weight basis */}
+                  {/* Sea leg — rate per CBM (volume-based, divisor 1,000,000 cm³→m³) */}
                   <div style={{...S.feeSectionTitle,marginTop:10}}>Seafreight leg (SIN→JKT)</div>
                   <div style={S.row2}>
-                    <Field label="Rate per kg (sea)">
+                    <Field label="Rate per CBM (sea)">
                       <div style={{display:"flex",gap:4}}>
                         <input style={{...S.input,flex:1}} type="number" value={f.fee_2} onChange={set("fee_2")} placeholder="0"/>
                         <select style={{...S.input,width:65}} value={f.fee_2_cur} onChange={set("fee_2_cur")}><option value="USD">USD</option><option value="SGD">SGD</option><option value="IDR">IDR</option></select>
                       </div>
                     </Field>
-                    <Field label="Weight basis (sea)">
-                      <select style={S.input} value={f.sea_weight_basis} onChange={set("sea_weight_basis")}>
-                        <option value="charged">Greater-of ({totalCharged.toFixed(1)} kg)</option>
-                        <option value="volumetric">Volumetric ({finalizeCharged(totalVolKg).charged.toFixed(1)} kg)</option>
-                        <option value="actual">Actual ({finalizeCharged(totalActualKg).charged.toFixed(1)} kg)</option>
-                      </select>
+                    <Field label="Volume (CBM)">
+                      <input style={S.input} type="number" value={f.cbm_sg_id} onChange={set("cbm_sg_id")} placeholder={autoCBM.toFixed(4)}/>
                     </Field>
                   </div>
                   <div style={S.totalBar}>
-                    <span>Air total: {fmtFee((+f.fee_1||0)*airKg,f.fee_1_cur)}</span>
-                    <span>+ Sea: {fmtFee(+f.fee_2,f.fee_2_cur)}/kg × {seaKg.toFixed(1)} kg = {fmtFee(seaPerKgTotal,f.fee_2_cur)}</span>
+                    <span>Air: {fmtFee(+f.fee_1,f.fee_1_cur)}/kg × {airKg.toFixed(1)} kg = {fmtFee((+f.fee_1||0)*airKg,f.fee_1_cur)}</span>
+                    <span>+ Sea: {fmtFee(+f.fee_2,f.fee_2_cur)}/CBM × {cbmSgId.toFixed(4)} m³ = {fmtFee((+f.fee_2||0)*cbmSgId,f.fee_2_cur)}</span>
                     {f.order_extra_fees.map((ef,i)=><span key={i}>+ {ef.qty>1?`${ef.qty}× `:""}{ef.label||"Extra"}: {fmtFee((+ef.amount||0)*(+ef.qty||1),ef.currency)}</span>)}
                   </div>
                 </>)}
