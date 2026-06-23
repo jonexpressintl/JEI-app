@@ -1,7 +1,7 @@
 import { useState, useMemo, useRef, useEffect } from "react";
-import { Package, Ship, Truck, Eye, EyeOff, Search, ChevronRight, AlertCircle, CheckCircle2, FileText, Calculator, Tag, LayoutGrid, Plus, Printer, LogOut, RefreshCw, Pencil, Boxes, Circle, CreditCard, ExternalLink, Copy, Check, Download, Upload, Users, DollarSign, TrendingUp, Trash2 } from "lucide-react";
+import { Package, Ship, Truck, Eye, EyeOff, Search, ChevronRight, AlertCircle, CheckCircle2, FileText, Calculator, Tag, LayoutGrid, Plus, Printer, LogOut, RefreshCw, Pencil, Boxes, Circle, CreditCard, ExternalLink, Copy, Check, Download, Upload, Users, DollarSign, TrendingUp, Trash2, X } from "lucide-react";
 import { useAuth } from "../lib/auth";
-import { useJEIData, updateCustomerRate, addCustomer, setShipmentStage, setShipmentPayment, setShipmentTracking, completeOrder, markAsInvoiced, updateOrder, cascadeDeleteOrder, addCostEntry, updateCostEntry, deleteCostEntry } from "../lib/data";
+import { useJEIData, updateCustomerRate, updateCustomer, addCustomer, setShipmentStage, setShipmentPayment, setShipmentTracking, completeOrder, markAsInvoiced, updateOrder, cascadeDeleteOrder, addCostEntry, updateCostEntry, deleteCostEntry } from "../lib/data";
 import { chargeable, finalizeCharged, fmtIDR, fmtShort, toIDR, trackingUrl, MIN_KG, IN_TO_CM, LB_TO_KG } from "../lib/pricing";
 import { generateInvoicePDF, generateQuotationPDF } from "../lib/pdf";
 import ConfirmDialog from "../components/ConfirmDialog";
@@ -525,23 +525,97 @@ function QuoteCalc({ctx}){
 }
 function RateCards({ctx,reload}){
   const {D}=ctx;
-  const [draft,setDraft]=useState(()=>Object.fromEntries(D.customers.map(c=>[c.id,c.rate_per_kg])));
+  const [draft,setDraft]=useState(()=>Object.fromEntries(D.customers.map(c=>[c.id,{rate:c.rate_per_kg,cur:c.rate_currency||"IDR"}])));
   const [saving,setSaving]=useState(null);
-  const save=async(id)=>{setSaving(id);await updateCustomerRate(id,Number(draft[id]));setSaving(null);reload();};
+  const [q,setQ]=useState("");
+  const SHOW=6;
+  const [showAll,setShowAll]=useState(false);
+
+  const filtered=useMemo(()=>
+    D.customers.filter(c=>c.name.toLowerCase().includes(q.toLowerCase()))
+  ,[q,D.customers]);
+  const visible=showAll||q?filtered:filtered.slice(0,SHOW);
+  const hasMore=!q&&!showAll&&filtered.length>SHOW;
+
+  const save=async(id)=>{
+    setSaving(id);
+    await updateCustomer(id,{rate_per_kg:Number(draft[id].rate),rate_currency:draft[id].cur});
+    setSaving(null);
+    reload();
+  };
+
+  const fmtRate=(c)=>{
+    const cur=draft[c.id]?.cur||c.rate_currency||"IDR";
+    const rate=c.rate_per_kg||0;
+    if(cur==="USD") return `$${Number(rate).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}`;
+    if(cur==="SGD") return `S$${Number(rate).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}`;
+    return fmtIDR(rate);
+  };
+
   return(
     <div style={{...S.card,marginBottom:18}}>
-      <div style={S.cardTitle}><Tag size={15}/> Customer rates <span style={S.muted}>· IDR per chargeable kg</span></div>
-      <div style={S.tHead}><span style={{flex:2}}>Customer</span><span style={{flex:1.6,textAlign:"right"}}>Rate / kg (IDR)</span><span style={{flex:1}}></span></div>
-      {D.customers.map(c=>{const changed=Number(draft[c.id])!==Number(c.rate_per_kg);return(
-        <div key={c.id} style={S.row2}>
-          <span style={{flex:2,fontWeight:600}}>{c.name}</span>
-          <span style={{flex:1.6,display:"flex",justifyContent:"flex-end"}}>
-            <input type="number" value={draft[c.id]} onChange={e=>setDraft({...draft,[c.id]:e.target.value})}
-              style={{...S.input,maxWidth:150,textAlign:"right"}}/></span>
-          <span style={{flex:1,display:"flex",justifyContent:"flex-end"}}>
-            {changed && <button style={S.saveBtn} onClick={()=>save(c.id)} disabled={saving===c.id}>{saving===c.id?"Saving…":"Save"}</button>}
-          </span>
-        </div>);})}
+      <div style={S.cardTitle}><Tag size={15}/> Customer rates <span style={S.muted}>· rate per chargeable kg</span></div>
+      {/* Search bar */}
+      <div style={{display:"flex",alignItems:"center",gap:8,padding:"10px 16px",borderBottom:"1px solid var(--line)"}}>
+        <Search size={14} style={{color:"var(--ink-3)",flexShrink:0}}/>
+        <input
+          style={{...S.input,margin:0,flex:1}}
+          placeholder={`Search ${D.customers.length} customers…`}
+          value={q} onChange={e=>{setQ(e.target.value);setShowAll(true);}}
+        />
+        {q && <button onClick={()=>{setQ("");setShowAll(false);}} style={{background:"transparent",border:"none",cursor:"pointer",color:"var(--ink-3)",padding:2}}><X size={14}/></button>}
+      </div>
+      <div style={S.tHead}>
+        <span style={{flex:2}}>Customer</span>
+        <span style={{flex:1.8,textAlign:"right"}}>Rate / kg</span>
+        <span style={{flex:0.7,textAlign:"right"}}>Currency</span>
+        <span style={{flex:1}}></span>
+      </div>
+      {visible.map(c=>{
+        const d=draft[c.id]||{rate:c.rate_per_kg,cur:c.rate_currency||"IDR"};
+        const changed=Number(d.rate)!==Number(c.rate_per_kg)||d.cur!==(c.rate_currency||"IDR");
+        const sym=d.cur==="USD"?"$":d.cur==="SGD"?"S$":"Rp";
+        return(
+          <div key={c.id} style={S.row2}>
+            <span style={{flex:2,fontWeight:600}}>{c.name}</span>
+            <span style={{flex:1.8,display:"flex",justifyContent:"flex-end",alignItems:"center",gap:4}}>
+              <span style={{fontSize:12,color:"var(--ink-3)"}}>{sym}</span>
+              <input type="number" value={d.rate}
+                onChange={e=>setDraft({...draft,[c.id]:{...d,rate:e.target.value}})}
+                style={{...S.input,maxWidth:130,textAlign:"right",margin:0}}/>
+            </span>
+            <span style={{flex:0.7,display:"flex",justifyContent:"flex-end"}}>
+              <select value={d.cur}
+                onChange={e=>setDraft({...draft,[c.id]:{...d,cur:e.target.value}})}
+                style={{...S.input,width:60,padding:"7px 4px",fontSize:12,margin:0}}>
+                <option value="IDR">IDR</option>
+                <option value="USD">USD</option>
+                <option value="SGD">SGD</option>
+              </select>
+            </span>
+            <span style={{flex:1,display:"flex",justifyContent:"flex-end"}}>
+              {changed && <button style={S.saveBtn} onClick={()=>save(c.id)} disabled={saving===c.id}>{saving===c.id?"Saving…":"Save"}</button>}
+            </span>
+          </div>
+        );
+      })}
+      {hasMore && (
+        <div style={{textAlign:"center",padding:"10px 0",borderTop:"1px solid var(--line)"}}>
+          <button onClick={()=>setShowAll(true)}
+            style={{background:"transparent",border:"none",color:"var(--navy)",fontWeight:600,cursor:"pointer",fontSize:13}}>
+            Show all {filtered.length} customers ↓
+          </button>
+        </div>
+      )}
+      {showAll&&!q&&filtered.length>SHOW&&(
+        <div style={{textAlign:"center",padding:"10px 0",borderTop:"1px solid var(--line)"}}>
+          <button onClick={()=>setShowAll(false)}
+            style={{background:"transparent",border:"none",color:"var(--ink-3)",fontWeight:600,cursor:"pointer",fontSize:13}}>
+            Show less ↑
+          </button>
+        </div>
+      )}
+      {filtered.length===0&&<div style={S.empty}>No customers match "{q}"</div>}
     </div>);
 }
 
