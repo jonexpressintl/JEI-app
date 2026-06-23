@@ -129,7 +129,7 @@ export default function Dashboard() {
     return shipCostIDR(o.shipment_id) * (Number(o.sell_idr)/tot);
   };
 
-  const ctx = { D, isOwner, custName, custRate, courierOf, shipmentOf, costsFor, quote, orderCostIDR, shipCostIDR, reload: D.reload, patchOrder: D.patchOrder, liveFx, refreshFx };
+  const ctx = { D, isOwner, custName, custRate, courierOf, shipmentOf, costsFor, quote, orderCostIDR, shipCostIDR, reload: D.reload, patchOrder: D.patchOrder, patchCustomer: D.patchCustomer, liveFx, refreshFx };
   const TABS = [
     {k:"orders",label:"Orders",icon:LayoutGrid},
     {k:"shipments",label:"Shipments",icon:Boxes},
@@ -473,6 +473,7 @@ function QuoteCalc({ctx}){
   const [feeAdd,setFeeAdd]=useState(0);const [feeAddCur,setFeeAddCur]=useState("USD");
   const [fxUSD,setFxUSD]=useState("");const [fxSGD,setFxSGD]=useState("");
   const [cbmUsSgOvr,setCbmUsSgOvr]=useState("");const [cbmSgIdOvr,setCbmSgIdOvr]=useState("");
+  const [airWeightBasis,setAirWeightBasis]=useState("charged");
   function sPkg(i,k,v){const p=[...pkgs];p[i]={...p[i],[k]:v};setPkgs(p);}
   function addP(){setPkgs([...pkgs,{weight:0,l:0,w:0,h:0,unit:"metric"}]);}
   function remP(i){if(pkgs.length>1)setPkgs(pkgs.filter((_,j)=>j!==i));}
@@ -482,12 +483,16 @@ function QuoteCalc({ctx}){
   function pickC(c){setCustName(c.name);setCustId(c.id);setPricePerKg(c.rate_per_kg||0);setPriceCur(c.rate_currency||"USD");setDdOpen(false);}
   const div=shUsSg==="Seafreight"||shUsSg==="FedEx Freight"?6000:5000;
   const mPkgs=pkgs.map(p=>{const u=p.unit||"metric";return{weight:u==="imperial"?+p.weight*LB_TO_KG:+p.weight,l:u==="imperial"?+p.l*IN_TO_CM:+p.l,w:u==="imperial"?+p.w*IN_TO_CM:+p.w,h:u==="imperial"?+p.h*IN_TO_CM:+p.h};});
-  let tRaw=0;mPkgs.forEach(p=>{tRaw+=chargeable({l:p.l,w:p.w,h:p.h},p.weight,div).raw;});
+  let tRaw=0,tActual=0,tVol=0;
+  mPkgs.forEach(p=>{const ch=chargeable({l:p.l,w:p.w,h:p.h},p.weight,div);tRaw+=ch.raw;tActual+=p.weight;tVol+=ch.vol;});
   const tAuto=finalizeCharged(tRaw).charged;const tCharged=+chargedOvr||tAuto;
+  const getKgQ=(basis)=>{if(basis==="actual")return finalizeCharged(tActual).charged;if(basis==="volumetric")return finalizeCharged(tVol).charged;return tCharged;};
+  const airKgQ=getKgQ(airWeightBasis);
   const wPrice=tCharged*(+pricePerKg);
   const aCBM=mPkgs.reduce((a,p)=>a+(p.l*p.w*p.h)/1000000,0);
   const cA=+cbmUsSgOvr||aCBM;const cB=+cbmSgIdOvr||aCBM;
   const s1T=(+fee1)*cA;const s2T=(+fee2)*cB;
+  const airBreakTotal=(+fee1)*airKgQ;
   const fM=isAirM(shUsSg)&&isAirM(shSgId)?"air_air":isAirM(shUsSg)&&!isAirM(shSgId)?"air_sea":"sea_sea";
   const uR=+fxUSD||ctx.liveFx?.usd_idr||15850;const sR=+fxSGD||ctx.liveFx?.sgd_idr||11900;
   const toI=(a,c)=>c==="USD"?(+a||0)*uR:c==="SGD"?(+a||0)*sR:(+a||0);
@@ -495,7 +500,7 @@ function QuoteCalc({ctx}){
   const gIDR=(()=>{
     if(fM==="air_air")return toI(wPrice,priceCur)+toI(+feeAdd,feeAddCur);
     if(fM==="air_sea"&&airSeaOpt==="weight")return toI(wPrice,priceCur)+toI(+feeAdd,feeAddCur);
-    if(fM==="air_sea")return toI(+fee1,fee1Cur)+toI(+feeClear,feeClearCur)+toI(s2T,fee2Cur)+toI(+feeAdd,feeAddCur);
+    if(fM==="air_sea")return toI(airBreakTotal,fee1Cur)+toI(+feeClear,feeClearCur)+toI(s2T,fee2Cur)+toI(+feeAdd,feeAddCur);
     return toI(s1T,fee1Cur)+toI(+feeClear,feeClearCur)+toI(s2T,fee2Cur)+toI(+feeAdd,feeAddCur);})();
   function dlPDF(){const doc=generateQuotationPDF({customerName:custName||"Customer",packages:mPkgs,divisor:div,courierName:shUsSg,ratePerKg:+pricePerKg,priceCurrency:priceCur});doc.save(`quotation-${custName||"customer"}.pdf`);}
   const CS=({v,onChange})=>(<select style={{...S.input,width:60,padding:"7px 2px",fontSize:12}} value={v} onChange={e=>onChange(e.target.value)}><option value="USD">USD</option><option value="SGD">SGD</option><option value="IDR">IDR</option></select>);
@@ -517,7 +522,34 @@ function QuoteCalc({ctx}){
       <div style={{background:"var(--head)",border:"1px solid var(--line)",borderRadius:12,padding:16,marginBottom:12}}>
         <div style={{fontSize:12,fontWeight:700,color:"var(--ink-3)",letterSpacing:".04em",marginBottom:10,textTransform:"uppercase"}}>Pricing — {fM==="air_air"?"Air + Air":fM==="air_sea"?"Air + Sea":"Sea + Sea"}</div>
         {fM==="air_air"&&(<><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}><label style={S.field}><span style={S.fLabel}>Rate per kg</span><div style={{display:"flex",gap:4}}><input style={{...S.input,flex:1}} type="number" value={pricePerKg} onChange={e=>setPricePerKg(e.target.value)}/><CS v={priceCur} onChange={setPriceCur}/></div></label><label style={S.field}><span style={S.fLabel}>Additional cost</span><div style={{display:"flex",gap:4}}><input style={{...S.input,flex:1}} type="number" value={feeAdd} onChange={e=>setFeeAdd(e.target.value)} placeholder="0"/><CS v={feeAddCur} onChange={setFeeAddCur}/></div></label></div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginTop:8}}><label style={S.field}><span style={S.fLabel}>USD→IDR</span><input style={S.input} type="number" value={fxUSD} onChange={e=>setFxUSD(e.target.value)} placeholder={ctx.liveFx?.usd_idr||15850}/></label><label style={S.field}><span style={S.fLabel}>SGD→IDR</span><input style={S.input} type="number" value={fxSGD} onChange={e=>setFxSGD(e.target.value)} placeholder={ctx.liveFx?.sgd_idr||11900}/></label></div><div style={{background:"var(--good-bg)",borderRadius:9,padding:"10px 14px",marginTop:8}}><span style={{fontWeight:700,fontSize:14}}>Total (IDR): {fmtIDR(gIDR)}</span></div></>)}
-        {fM==="air_sea"&&(<><label style={S.field}><span style={S.fLabel}>Pricing method</span><select style={S.input} value={airSeaOpt} onChange={e=>setAirSeaOpt(e.target.value)}><option value="weight">Price per weight + Additional</option><option value="breakdown">Airfreight + Clearance + Seafreight/CBM + Additional</option></select></label>{airSeaOpt==="weight"?(<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}><label style={S.field}><span style={S.fLabel}>Rate per kg</span><div style={{display:"flex",gap:4}}><input style={{...S.input,flex:1}} type="number" value={pricePerKg} onChange={e=>setPricePerKg(e.target.value)}/><CS v={priceCur} onChange={setPriceCur}/></div></label><label style={S.field}><span style={S.fLabel}>Additional cost</span><div style={{display:"flex",gap:4}}><input style={{...S.input,flex:1}} type="number" value={feeAdd} onChange={e=>setFeeAdd(e.target.value)} placeholder="0"/><CS v={feeAddCur} onChange={setFeeAddCur}/></div></label></div>):(<><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}><label style={S.field}><span style={S.fLabel}>Airfreight fee</span><div style={{display:"flex",gap:4}}><input style={{...S.input,flex:1}} type="number" value={fee1} onChange={e=>setFee1(e.target.value)}/><CS v={fee1Cur} onChange={setFee1Cur}/></div></label><label style={S.field}><span style={S.fLabel}>Clearance fee</span><div style={{display:"flex",gap:4}}><input style={{...S.input,flex:1}} type="number" value={feeClear} onChange={e=>setFeeClear(e.target.value)}/><CS v={feeClearCur} onChange={setFeeClearCur}/></div></label></div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}><label style={S.field}><span style={S.fLabel}>SF rate/CBM (SIN→JKT)</span><div style={{display:"flex",gap:4}}><input style={{...S.input,flex:1}} type="number" value={fee2} onChange={e=>setFee2(e.target.value)}/><CS v={fee2Cur} onChange={setFee2Cur}/></div></label><label style={S.field}><span style={S.fLabel}>Additional cost</span><div style={{display:"flex",gap:4}}><input style={{...S.input,flex:1}} type="number" value={feeAdd} onChange={e=>setFeeAdd(e.target.value)}/><CS v={feeAddCur} onChange={setFeeAddCur}/></div></label></div><label style={S.field}><span style={S.fLabel}>{`CBM SIN→JKT (auto: ${aCBM.toFixed(3)})`}</span><input style={{...S.input,maxWidth:200}} type="number" value={cbmSgIdOvr} onChange={e=>setCbmSgIdOvr(e.target.value)} placeholder={aCBM.toFixed(3)}/></label></>)}<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginTop:8}}><label style={S.field}><span style={S.fLabel}>USD→IDR</span><input style={S.input} type="number" value={fxUSD} onChange={e=>setFxUSD(e.target.value)} placeholder={ctx.liveFx?.usd_idr||15850}/></label><label style={S.field}><span style={S.fLabel}>SGD→IDR</span><input style={S.input} type="number" value={fxSGD} onChange={e=>setFxSGD(e.target.value)} placeholder={ctx.liveFx?.sgd_idr||11900}/></label></div><div style={{background:"var(--good-bg)",borderRadius:9,padding:"10px 14px",marginTop:6}}><span style={{fontWeight:700,fontSize:14}}>Total (IDR): {fmtIDR(gIDR)}</span></div></>)}
+        {fM==="air_sea"&&(<><label style={S.field}><span style={S.fLabel}>Pricing method</span><select style={S.input} value={airSeaOpt} onChange={e=>setAirSeaOpt(e.target.value)}><option value="weight">Price per weight + Additional</option><option value="breakdown">Airfreight per-kg + Seafreight/CBM</option></select></label>{airSeaOpt==="weight"?(<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}><label style={S.field}><span style={S.fLabel}>Rate per kg</span><div style={{display:"flex",gap:4}}><input style={{...S.input,flex:1}} type="number" value={pricePerKg} onChange={e=>setPricePerKg(e.target.value)}/><CS v={priceCur} onChange={setPriceCur}/></div></label><label style={S.field}><span style={S.fLabel}>Additional cost</span><div style={{display:"flex",gap:4}}><input style={{...S.input,flex:1}} type="number" value={feeAdd} onChange={e=>setFeeAdd(e.target.value)} placeholder="0"/><CS v={feeAddCur} onChange={setFeeAddCur}/></div></label></div>):(<>
+          <div style={{fontSize:11,fontWeight:700,color:"var(--ink-3)",letterSpacing:".04em",margin:"8px 0 4px"}}>AIRFREIGHT LEG (USA→SIN)</div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+            <label style={S.field}><span style={S.fLabel}>Rate per kg (air)</span><div style={{display:"flex",gap:4}}><input style={{...S.input,flex:1}} type="number" value={fee1} onChange={e=>setFee1(e.target.value)}/><CS v={fee1Cur} onChange={setFee1Cur}/></div></label>
+            <label style={S.field}><span style={S.fLabel}>Weight basis (air)</span>
+              <select style={S.input} value={airWeightBasis} onChange={e=>setAirWeightBasis(e.target.value)}>
+                <option value="charged">Greater-of ({tCharged.toFixed(1)} kg)</option>
+                <option value="volumetric">Volumetric ({finalizeCharged(tVol).charged.toFixed(1)} kg)</option>
+                <option value="actual">Actual ({finalizeCharged(tActual).charged.toFixed(1)} kg)</option>
+              </select>
+            </label>
+          </div>
+          <div style={{background:"var(--card)",border:"1px solid var(--line)",borderRadius:8,padding:"8px 12px",fontSize:12.5,marginBottom:8}}>
+            Air: {fm(+fee1,fee1Cur)}/kg × {airKgQ.toFixed(1)} kg = {fm(airBreakTotal,fee1Cur)}
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+            <label style={S.field}><span style={S.fLabel}>Clearance fee</span><div style={{display:"flex",gap:4}}><input style={{...S.input,flex:1}} type="number" value={feeClear} onChange={e=>setFeeClear(e.target.value)}/><CS v={feeClearCur} onChange={setFeeClearCur}/></div></label>
+          </div>
+          <div style={{fontSize:11,fontWeight:700,color:"var(--ink-3)",letterSpacing:".04em",margin:"8px 0 4px"}}>SEAFREIGHT LEG (SIN→JKT)</div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+            <label style={S.field}><span style={S.fLabel}>Rate per CBM (sea)</span><div style={{display:"flex",gap:4}}><input style={{...S.input,flex:1}} type="number" value={fee2} onChange={e=>setFee2(e.target.value)}/><CS v={fee2Cur} onChange={setFee2Cur}/></div></label>
+            <label style={S.field}><span style={S.fLabel}>{`Volume CBM (auto: ${aCBM.toFixed(4)})`}</span><input style={S.input} type="number" value={cbmSgIdOvr} onChange={e=>setCbmSgIdOvr(e.target.value)} placeholder={aCBM.toFixed(4)}/></label>
+          </div>
+          <div style={{background:"var(--card)",border:"1px solid var(--line)",borderRadius:8,padding:"8px 12px",fontSize:12.5,marginBottom:8}}>
+            Air total: {fm(airBreakTotal,fee1Cur)} + Sea: {fm(+fee2,fee2Cur)}/CBM × {cB.toFixed(4)} m³ = {fm(s2T,fee2Cur)}
+          </div>
+          <label style={S.field}><span style={S.fLabel}>Additional cost</span><div style={{display:"flex",gap:4}}><input style={{...S.input,flex:1}} type="number" value={feeAdd} onChange={e=>setFeeAdd(e.target.value)}/><CS v={feeAddCur} onChange={setFeeAddCur}/></div></label>
+        </>)}<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginTop:8}}><label style={S.field}><span style={S.fLabel}>USD→IDR</span><input style={S.input} type="number" value={fxUSD} onChange={e=>setFxUSD(e.target.value)} placeholder={ctx.liveFx?.usd_idr||15850}/></label><label style={S.field}><span style={S.fLabel}>SGD→IDR</span><input style={S.input} type="number" value={fxSGD} onChange={e=>setFxSGD(e.target.value)} placeholder={ctx.liveFx?.sgd_idr||11900}/></label></div><div style={{background:"var(--good-bg)",borderRadius:9,padding:"10px 14px",marginTop:6}}><span style={{fontWeight:700,fontSize:14}}>Total (IDR): {fmtIDR(gIDR)}</span></div></>)}
         {fM==="sea_sea"&&(<><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}><label style={S.field}><span style={S.fLabel}>SF1 rate/CBM (USA→SIN)</span><div style={{display:"flex",gap:4}}><input style={{...S.input,flex:1}} type="number" value={fee1} onChange={e=>setFee1(e.target.value)}/><CS v={fee1Cur} onChange={setFee1Cur}/></div></label><label style={S.field}><span style={S.fLabel}>Clearance fee</span><div style={{display:"flex",gap:4}}><input style={{...S.input,flex:1}} type="number" value={feeClear} onChange={e=>setFeeClear(e.target.value)}/><CS v={feeClearCur} onChange={setFeeClearCur}/></div></label></div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}><label style={S.field}><span style={S.fLabel}>SF2 rate/CBM (SIN→JKT)</span><div style={{display:"flex",gap:4}}><input style={{...S.input,flex:1}} type="number" value={fee2} onChange={e=>setFee2(e.target.value)}/><CS v={fee2Cur} onChange={setFee2Cur}/></div></label><label style={S.field}><span style={S.fLabel}>Additional cost</span><div style={{display:"flex",gap:4}}><input style={{...S.input,flex:1}} type="number" value={feeAdd} onChange={e=>setFeeAdd(e.target.value)}/><CS v={feeAddCur} onChange={setFeeAddCur}/></div></label></div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}><label style={S.field}><span style={S.fLabel}>USD→IDR</span><input style={S.input} type="number" value={fxUSD} onChange={e=>setFxUSD(e.target.value)} placeholder={ctx.liveFx?.usd_idr||15850}/></label><label style={S.field}><span style={S.fLabel}>SGD→IDR</span><input style={S.input} type="number" value={fxSGD} onChange={e=>setFxSGD(e.target.value)} placeholder={ctx.liveFx?.sgd_idr||11900}/></label></div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}><label style={S.field}><span style={S.fLabel}>{`CBM USA→SIN (auto: ${aCBM.toFixed(3)})`}</span><input style={S.input} type="number" value={cbmUsSgOvr} onChange={e=>setCbmUsSgOvr(e.target.value)} placeholder={aCBM.toFixed(3)}/></label><label style={S.field}><span style={S.fLabel}>{`CBM SIN→JKT (auto: ${aCBM.toFixed(3)})`}</span><input style={S.input} type="number" value={cbmSgIdOvr} onChange={e=>setCbmSgIdOvr(e.target.value)} placeholder={aCBM.toFixed(3)}/></label></div><div style={{display:"flex",flexWrap:"wrap",gap:"6px 14px",background:"var(--card)",border:"1px solid var(--line)",borderRadius:9,padding:"10px 14px",fontSize:12.5,marginTop:6}}><span>SF1:{fm(+fee1,fee1Cur)}/CBM×{cA.toFixed(2)}={fm(s1T,fee1Cur)}</span><span>Clear:{fm(+feeClear,feeClearCur)}</span><span>SF2:{fm(+fee2,fee2Cur)}/CBM×{cB.toFixed(2)}={fm(s2T,fee2Cur)}</span><span>Add:{fm(+feeAdd,feeAddCur)}</span></div><div style={{background:"var(--good-bg)",borderRadius:9,padding:"10px 14px",marginTop:4}}><span style={{fontWeight:700,fontSize:14}}>Total (IDR): {fmtIDR(gIDR)}</span></div></>)}
       </div>
       <div style={{display:"flex",justifyContent:"flex-end"}}><button style={S.printBtn} onClick={dlPDF}><Download size={13}/> Download PDF</button></div>
@@ -539,9 +571,10 @@ function RateCards({ctx,reload}){
 
   const save=async(id)=>{
     setSaving(id);
-    await updateCustomer(id,{rate_per_kg:Number(draft[id].rate),rate_currency:draft[id].cur});
+    const patch={rate_per_kg:Number(draft[id].rate),rate_currency:draft[id].cur};
+    await updateCustomer(id,patch);
+    ctx.patchCustomer&&ctx.patchCustomer(id,patch);
     setSaving(null);
-    reload();
   };
 
   const fmtRate=(c)=>{
@@ -687,6 +720,7 @@ function InvoiceDoc({ctx,order,onComplete,reload}){
   const [sgdRate,setSgdRate]=useState(order.invoice_sgd_rate || "");
   const [newCostLabel,setNewCostLabel]=useState("");
   const [newCostAmt,setNewCostAmt]=useState("");
+  const [newCostQty,setNewCostQty]=useState("1");
   const [newCostCur,setNewCostCur]=useState("IDR");
   const [saving,setSaving]=useState(false);
 
@@ -699,7 +733,9 @@ function InvoiceDoc({ctx,order,onComplete,reload}){
   const extraFeesIDR = (order.order_extra_fees||[]).reduce((a,ef)=>{
     const qty=+ef.qty||1; return a+toIDR((+ef.amount||0)*qty, ef.currency||"USD");
   }, 0);
-  const invoiceFeesIDR = (order.extra_costs||[]).reduce((a,ec)=>a+toIDR(+ec.amount||0, ec.currency||"IDR"), 0);
+  const invoiceFeesIDR = (order.extra_costs||[]).reduce((a,ec)=>{
+    const qty=+ec.qty||1; return a+toIDR((+ec.amount||0)*qty, ec.currency||"IDR");
+  }, 0);
   const grandTotalIDR = q.feeLines.reduce((a,l)=>a+toIDR(l.amount,l.currency), 0) + extraFeesIDR + invoiceFeesIDR;
 
   async function saveRates(){
@@ -712,18 +748,21 @@ function InvoiceDoc({ctx,order,onComplete,reload}){
 
   async function addCost(){
     if(!newCostLabel.trim()||!newCostAmt) return;
-    const extra=[...(order.extra_costs||[]),{label:newCostLabel.trim(),amount:+newCostAmt,currency:newCostCur}];
-    const patch={extra_costs:extra,sell_idr:Math.round(grandTotalIDR+toIDR(+newCostAmt,newCostCur))};
+    const qty=Math.max(1,+newCostQty||1);
+    const entry={label:newCostLabel.trim(),amount:+newCostAmt,qty,currency:newCostCur};
+    const extra=[...(order.extra_costs||[]),entry];
+    const patch={extra_costs:extra,sell_idr:Math.round(grandTotalIDR+toIDR((+newCostAmt)*qty,newCostCur))};
     const {error}=await updateOrder(order.id,patch);
     if(!error){
-      setNewCostLabel("");setNewCostAmt("");
+      setNewCostLabel("");setNewCostAmt("");setNewCostQty("1");
       patchOrder?patchOrder(order.id,patch):reload&&reload();
     }
   }
   async function removeCost(idx){
     const extra=(order.extra_costs||[]).filter((_,i)=>i!==idx);
     const removed=(order.extra_costs||[])[idx];
-    const newTotal=grandTotalIDR-toIDR(removed.amount,removed.currency);
+    const removedQty=+removed.qty||1;
+    const newTotal=grandTotalIDR-toIDR((+removed.amount||0)*removedQty,removed.currency);
     const patch={extra_costs:extra,sell_idr:Math.round(newTotal)};
     const {error}=await updateOrder(order.id,patch);
     if(!error) patchOrder?patchOrder(order.id,patch):reload&&reload();
@@ -783,27 +822,34 @@ function InvoiceDoc({ctx,order,onComplete,reload}){
         );
       })}
       {/* Invoice-tab extra costs — deletable (existing behaviour) */}
-      {(order.extra_costs||[]).map((ec,i)=>(
-        <div key={"ec-"+i} style={S.invLine}>
-          <span style={{flex:3,display:"flex",alignItems:"center",gap:6}}>
-            <span style={{fontSize:10,background:"var(--navy)",color:"#fff",borderRadius:4,padding:"1px 5px",fontWeight:700,letterSpacing:".04em"}}>INVOICE</span>
-            {ec.label}
-          </span>
-          <span style={{flex:1,textAlign:"right"}}>{fmtOrig(ec.amount,ec.currency)}</span>
-          <span style={{flex:1,textAlign:"right",fontWeight:600}}>{fmtIDR(toIDR(ec.amount,ec.currency))}</span>
-          <button onClick={()=>removeCost(i)} style={{width:28,background:"transparent",border:"none",color:"var(--bad)",cursor:"pointer",padding:2,flexShrink:0}}><Trash2 size={13}/></button>
-        </div>
-      ))}
+      {(order.extra_costs||[]).map((ec,i)=>{
+        const qty=+ec.qty||1; const total=(+ec.amount||0)*qty;
+        const label=qty>1?`${ec.label} ×${qty}`:ec.label;
+        return(
+          <div key={"ec-"+i} style={S.invLine}>
+            <span style={{flex:3,display:"flex",alignItems:"center",gap:6}}>
+              <span style={{fontSize:10,background:"var(--navy)",color:"#fff",borderRadius:4,padding:"1px 5px",fontWeight:700,letterSpacing:".04em"}}>INVOICE</span>
+              {label}
+            </span>
+            <span style={{flex:1,textAlign:"right"}}>{fmtOrig(total,ec.currency)}</span>
+            <span style={{flex:1,textAlign:"right",fontWeight:600}}>{fmtIDR(toIDR(total,ec.currency))}</span>
+            <button onClick={()=>removeCost(i)} style={{width:28,background:"transparent",border:"none",color:"var(--bad)",cursor:"pointer",padding:2,flexShrink:0}}><Trash2 size={13}/></button>
+          </div>
+        );
+      })}
 
       {/* Add invoice-level cost line */}
       <div style={S.addCostBox}>
         <div style={{fontSize:12,fontWeight:700,color:"var(--ink-3)",letterSpacing:".04em",marginBottom:8}}>ADD COST LINE</div>
-        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
           <input style={{...S.input,flex:2,minWidth:140}} placeholder="Description (e.g. Handling fee)" value={newCostLabel} onChange={e=>setNewCostLabel(e.target.value)}/>
-          <input style={{...S.input,width:110}} type="number" placeholder="Amount" value={newCostAmt} onChange={e=>setNewCostAmt(e.target.value)}/>
+          <input style={{...S.input,width:70}} type="number" min="1" placeholder="Qty" value={newCostQty} onChange={e=>setNewCostQty(e.target.value)} title="Quantity / multiplier"/>
+          <span style={{fontSize:12,color:"var(--ink-3)",flexShrink:0}}>×</span>
+          <input style={{...S.input,width:110}} type="number" placeholder="Unit amount" value={newCostAmt} onChange={e=>setNewCostAmt(e.target.value)}/>
           <select style={{...S.input,width:80}} value={newCostCur} onChange={e=>setNewCostCur(e.target.value)}>
             <option value="IDR">IDR</option><option value="USD">USD</option><option value="SGD">SGD</option>
           </select>
+          {newCostAmt&&+newCostQty>1&&<span style={{fontSize:12,color:"var(--navy)",fontWeight:600,flexShrink:0}}>= {fmtOrig((+newCostAmt)*(+newCostQty||1),newCostCur)}</span>}
           <button style={S.printBtn} onClick={addCost}><Plus size={13}/> Add cost</button>
         </div>
       </div>
@@ -908,6 +954,7 @@ function CostDoc({ctx,order,reload,onClose}){
   const [localCosts,setLocalCosts]=useState(()=>(D.costEntries||[]).filter(e=>e.order_id===order.id));
   const [newCostLabel,setNewCostLabel]=useState("");
   const [newCostAmt,setNewCostAmt]=useState("");
+  const [newCostQty,setNewCostQty]=useState("1");
   const [newCostCur,setNewCostCur]=useState("USD");
 
   const fxU=+usdRate||ctx.liveFx?.usd_idr||15850;
@@ -916,19 +963,21 @@ function CostDoc({ctx,order,reload,onClose}){
   const fmtOrig=(amt,cur)=>cur==="USD"?`$${Number(amt||0).toFixed(2)}`:cur==="SGD"?`S$${Number(amt||0).toFixed(2)}`:fmtIDR(amt||0);
 
   const extraFeesIDR=(order.order_extra_fees||[]).reduce((a,ef)=>{const qty=+ef.qty||1;return a+toIDR((+ef.amount||0)*qty,ef.currency||"USD");},0);
-  const invoiceFeesIDR=(order.extra_costs||[]).reduce((a,ec)=>a+toIDR(+ec.amount||0,ec.currency||"IDR"),0);
+  const invoiceFeesIDR=(order.extra_costs||[]).reduce((a,ec)=>{const qty=+ec.qty||1;return a+toIDR((+ec.amount||0)*qty,ec.currency||"IDR");},0);
   const revenueIDR=q.feeLines.reduce((a,l)=>a+toIDR(l.amount,l.currency),0)+extraFeesIDR+invoiceFeesIDR;
-  const costsIDR=localCosts.reduce((a,c)=>a+toIDR(c.amount,c.currency),0);
+  const costsIDR=localCosts.reduce((a,c)=>a+toIDR((+c.amount||0)*(+c.qty||1),c.currency),0);
   const netIDR=revenueIDR-costsIDR;
 
   async function addCost(){
     if(!newCostLabel.trim()||!newCostAmt) return;
-    const entry={label:newCostLabel.trim(),amount:+newCostAmt,currency:newCostCur,order_id:order.id,cost_date:new Date().toISOString().slice(0,10)};
+    const qty=Math.max(1,+newCostQty||1);
+    const totalAmt=(+newCostAmt)*qty;
+    // Store as flat amount (unit × qty) so existing cost_entries schema doesn't need a migration
+    const entry={label:qty>1?`${newCostLabel.trim()} ×${qty}`:newCostLabel.trim(),amount:totalAmt,currency:newCostCur,order_id:order.id,cost_date:new Date().toISOString().slice(0,10)};
     const {data}=await addCostEntry(entry);
-    // Optimistic: add to local state immediately, no full reload
     const newEntry=data?.[0]??{...entry,id:"tmp-"+Date.now()};
     setLocalCosts(prev=>[...prev,newEntry]);
-    setNewCostLabel("");setNewCostAmt("");
+    setNewCostLabel("");setNewCostAmt("");setNewCostQty("1");
   }
   async function removeCost(id){
     // Optimistic remove first, then DB
@@ -1011,12 +1060,15 @@ function CostDoc({ctx,order,reload,onClose}){
             <button onClick={()=>removeCost(c.id)} style={{width:28,background:"transparent",border:"none",color:"var(--bad)",cursor:"pointer",padding:2}}><Trash2 size={13}/></button>
           </div>
         ))}
-        <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:8}}>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:8,alignItems:"center"}}>
           <input style={{...S.input,flex:2,minWidth:140}} placeholder="Cost description (e.g. Shipping cost, Customs...)" value={newCostLabel} onChange={e=>setNewCostLabel(e.target.value)}/>
-          <input style={{...S.input,width:110}} type="number" placeholder="Amount" value={newCostAmt} onChange={e=>setNewCostAmt(e.target.value)}/>
+          <input style={{...S.input,width:70}} type="number" min="1" placeholder="Qty" value={newCostQty} onChange={e=>setNewCostQty(e.target.value)} title="Quantity / multiplier"/>
+          <span style={{fontSize:12,color:"var(--ink-3)",flexShrink:0}}>×</span>
+          <input style={{...S.input,width:110}} type="number" placeholder="Unit amount" value={newCostAmt} onChange={e=>setNewCostAmt(e.target.value)}/>
           <select style={{...S.input,width:80}} value={newCostCur} onChange={e=>setNewCostCur(e.target.value)}>
             <option value="USD">USD</option><option value="SGD">SGD</option><option value="IDR">IDR</option>
           </select>
+          {newCostAmt&&+newCostQty>1&&<span style={{fontSize:12,color:"var(--bad)",fontWeight:600,flexShrink:0}}>= {fmtOrig((+newCostAmt)*(+newCostQty||1),newCostCur)}</span>}
           <button style={{...S.printBtn,background:"var(--bad)"}} onClick={addCost}><Plus size={13}/> Add cost</button>
         </div>
       </div>

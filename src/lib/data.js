@@ -43,8 +43,6 @@ export function useJEIData() {
   useEffect(() => { load(); }, [load]);
 
   // Locally patch one order's fields without refetching everything.
-  // Used after small writes (e.g. adding a cost line, saving invoice rates)
-  // so the UI doesn't jump/reset.
   const patchOrder = useCallback((orderId, patch) => {
     setData(d => ({
       ...d,
@@ -52,7 +50,15 @@ export function useJEIData() {
     }));
   }, []);
 
-  return { ...data, loading, error, reload: load, patchOrder };
+  // Locally patch one customer's fields without refetching.
+  const patchCustomer = useCallback((customerId, patch) => {
+    setData(d => ({
+      ...d,
+      customers: d.customers.map(c => c.id === customerId ? { ...c, ...patch } : c),
+    }));
+  }, []);
+
+  return { ...data, loading, error, reload: load, patchOrder, patchCustomer };
 }
 
 // ── Customers ──
