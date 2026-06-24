@@ -278,22 +278,34 @@ function Orders({ctx}){
     </div>
     <div style={S.card}>
       <div style={S.tHead}>
-        <span style={{flex:"0 0 88px"}}>Order</span><span style={{flex:2}}>Customer / Product</span>
-        <span style={{flex:"0 0 90px",textAlign:"right"}}>Charged kg</span><span style={{flex:1.7}}>Stage</span>
-        {isOwner&&<span style={{flex:1,textAlign:"right"}}>Revenue</span>}{isOwner&&<span style={{flex:.8,textAlign:"right"}}>Margin</span>}
-        {!isOwner&&<span style={{flex:1}}>ETA ID</span>}<span style={{flex:"0 0 44px"}}/>
+        <span style={{flex:"0 0 96px"}}>Order</span>
+        <span style={{flex:2}}>Customer / Product</span>
+        <span style={{flex:"0 0 100px",textAlign:"right"}}>Charged kg</span>
+        <span style={{flex:2}}>Stage</span>
+        <span style={{flex:"0 0 90px",textAlign:"center"}}>Payment</span>
+        {isOwner&&<span style={{flex:1,textAlign:"right"}}>Revenue</span>}
+        {isOwner&&<span style={{flex:"0 0 70px",textAlign:"right"}}>Margin</span>}
+        {!isOwner&&<span style={{flex:1}}>ETA ID</span>}
+        <span style={{flex:"0 0 44px"}}/>
       </div>
       {list.map(o=>{const s=shipmentOf(o.shipment_id);const qd=quote(o);const cost=orderCostIDR(o);const m=Number(o.sell_idr)-cost;const mp=Number(o.sell_idr)?m/Number(o.sell_idr)*100:0;const consol=D.orders.filter(x=>x.shipment_id===o.shipment_id).length>1;return(
-        <div key={o.id} style={S.row} className="row">
-          <span style={{flex:"0 0 88px",fontFamily:"var(--mono)",fontSize:12,color:"var(--ink-3)",cursor:"pointer"}} onClick={()=>setSel(sel===o.id?null:o.id)}>{o.id}</span>
-          <span style={{flex:2,cursor:"pointer"}} onClick={()=>setSel(sel===o.id?null:o.id)}><div style={{fontWeight:600}}>{custName(o.customer_id)}</div><div style={{fontSize:12,color:"var(--ink-3)"}}>{o.product}</div></span>
-          <span style={{flex:"0 0 90px",textAlign:"right",fontVariantNumeric:"tabular-nums"}}>{qd.charged.toFixed(1)}<span style={{fontSize:10,color:"var(--ink-3)",marginLeft:3}}>{qd.minApplied?"min":qd.basis==="volumetric"?"vol":"act"}</span></span>
-          <span style={{flex:1.7}}>
+        <div key={o.id} style={{...S.row,padding:"14px 16px"}} className="row">
+          <span style={{flex:"0 0 96px",fontFamily:"var(--mono)",fontSize:12,color:"var(--ink-3)",cursor:"pointer"}} onClick={()=>setSel(sel===o.id?null:o.id)}>{o.id}</span>
+          <span style={{flex:2,cursor:"pointer"}} onClick={()=>setSel(sel===o.id?null:o.id)}>
+            <div style={{fontWeight:600}}>{custName(o.customer_id)}</div>
+            <div style={{fontSize:12,color:"var(--ink-3)"}}>{o.product}</div>
+          </span>
+          <span style={{flex:"0 0 100px",textAlign:"right",fontVariantNumeric:"tabular-nums"}}>
+            {qd.charged.toFixed(1)}<span style={{fontSize:10,color:"var(--ink-3)",marginLeft:3}}>{qd.minApplied?"min":qd.basis==="volumetric"?"vol":"act"}</span>
+          </span>
+          <span style={{flex:2}}>
             <span className="stage" data-final={s?.stage==="Delivered to customer"}>{stageIcon(s?.stage)} {s?.stage}</span>
+          </span>
+          <span style={{flex:"0 0 90px",textAlign:"center"}}>
             <span className={"paybadge pay-"+(s?.payment??"Unpaid")}>{s?.payment??"Unpaid"}</span>
           </span>
           {isOwner&&<span style={{flex:1,textAlign:"right",fontVariantNumeric:"tabular-nums"}}>{fmtShort(Number(o.sell_idr))}</span>}
-          {isOwner&&<span style={{flex:.8,textAlign:"right"}}><span style={{...S.pill,background:mp>40?"var(--good-bg)":mp>20?"var(--warn-bg)":"var(--bad-bg)",color:mp>40?"var(--good)":mp>20?"var(--warn)":"var(--bad)"}}>{mp.toFixed(0)}%</span></span>}
+          {isOwner&&<span style={{flex:"0 0 70px",textAlign:"right"}}><span style={{...S.pill,background:mp>40?"var(--good-bg)":mp>20?"var(--warn-bg)":"var(--bad-bg)",color:mp>40?"var(--good)":mp>20?"var(--warn)":"var(--bad)"}}>{mp.toFixed(0)}%</span></span>}
           {!isOwner&&<span style={{flex:1,fontSize:13,color:"var(--ink-2)"}}>{s?.eta_id ? new Date(s.eta_id).toLocaleDateString("en-GB") : "—"}</span>}
           <span style={{flex:"0 0 44px",display:"flex",justifyContent:"flex-end",gap:4}}>
             <button style={S.iconMini} title="Edit" onClick={()=>openEdit(o)}><Pencil size={14}/></button>
