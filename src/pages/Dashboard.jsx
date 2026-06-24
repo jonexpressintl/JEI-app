@@ -864,21 +864,19 @@ function Invoices({ctx}){
           <button onClick={()=>setOpen(isOpen?null:o.id)}
             style={{...S.shipCard,padding:"12px 16px",display:"flex",flexDirection:"column",justifyContent:"center",gap:6,cursor:"pointer",
               width:"100%",background:isOpen?"var(--head)":"var(--card)",opacity:o.invoice_done?.8:1,border:"none",borderRadius:0}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-              <div style={{display:"flex",alignItems:"center",gap:10}}>
-                <FileText size={15} style={{color:o.invoice_done?"var(--good)":"var(--navy)"}}/>
-                <span style={{fontFamily:"var(--mono)",fontWeight:700,fontSize:13}}>{o.id}</span>
+            <div style={{display:"grid",gridTemplateColumns:"20px 90px 1fr 90px 140px 20px",alignItems:"center",gap:"0 10px"}}>
+              <FileText size={15} style={{color:o.invoice_done?"var(--good)":"var(--navy)",justifySelf:"center"}}/>
+              <span style={{fontFamily:"var(--mono)",fontWeight:700,fontSize:13}}>{o.id}</span>
+              <div>
                 <span style={{fontWeight:600}}>{custName(o.customer_id)}</span>
-                <span style={{fontSize:12.5,color:"var(--ink-3)"}}>{o.product}</span>
-                {o.invoice_done&&<span style={{fontSize:11,background:"var(--good-bg)",color:"var(--good)",borderRadius:5,padding:"1px 7px",fontWeight:700}}>✓ Done</span>}
+                {o.product&&<span style={{fontSize:12,color:"var(--ink-3)",marginLeft:8}}>{o.product}</span>}
+                {o.invoice_done&&<span style={{fontSize:11,background:"var(--good-bg)",color:"var(--good)",borderRadius:5,padding:"1px 7px",fontWeight:700,marginLeft:8}}>✓ Done</span>}
               </div>
-              <div style={{display:"flex",alignItems:"center",gap:8}}>
-                <span className={"paybadge pay-"+(s?.payment??"Unpaid")}>{s?.payment??"Unpaid"}</span>
-                <span style={{fontFamily:"var(--display)",fontWeight:700,fontSize:14}}>{fmtIDR(Number(o.sell_idr||0))}</span>
-                <ChevronRight size={14} style={{color:"var(--ink-3)",transform:isOpen?"rotate(90deg)":"none",transition:".15s",flexShrink:0}}/>
-              </div>
+              <span className={"paybadge pay-"+(s?.payment??"Unpaid")} style={{justifySelf:"center"}}>{s?.payment??"Unpaid"}</span>
+              <span style={{fontFamily:"var(--display)",fontWeight:700,fontSize:14,textAlign:"right"}}>{fmtIDR(Number(o.sell_idr||0))}</span>
+              <ChevronRight size={14} style={{color:"var(--ink-3)",transform:isOpen?"rotate(90deg)":"none",transition:".15s",justifySelf:"center"}}/>
             </div>
-            <TabStatusBar order={o}/>
+            <TabStatusBar order={o} style={{paddingLeft:30}}/>
           </button>
           {isOpen && <div style={{borderTop:"2px solid var(--navy)"}}><InvoiceDoc ctx={ctx} order={o} onClose={()=>setOpen(null)} reload={reload}/></div>}
         </div>
@@ -1172,21 +1170,19 @@ function Costs({ctx}){
             <button onClick={()=>setOpenId(isOpen?null:o.id)}
               style={{...S.shipCard,padding:"12px 16px",display:"flex",flexDirection:"column",justifyContent:"center",gap:6,cursor:"pointer",
                 width:"100%",background:isOpen?"var(--head)":"var(--card)",opacity:o.cost_done?.8:1,border:"none",borderRadius:0}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                <div style={{display:"flex",alignItems:"center",gap:10}}>
-                  <CreditCard size={15} style={{color:o.cost_done?"var(--good)":"var(--navy)"}}/>
-                  <span style={{fontFamily:"var(--mono)",fontWeight:700,fontSize:13}}>{o.id}</span>
+              <div style={{display:"grid",gridTemplateColumns:"20px 90px 1fr 90px 140px 20px",alignItems:"center",gap:"0 10px"}}>
+                <CreditCard size={15} style={{color:o.cost_done?"var(--good)":"var(--navy)",justifySelf:"center"}}/>
+                <span style={{fontFamily:"var(--mono)",fontWeight:700,fontSize:13}}>{o.id}</span>
+                <div>
                   <span style={{fontWeight:600}}>{custName(o.customer_id)}</span>
-                  <span style={{fontSize:12.5,color:"var(--ink-3)"}}>{o.product}</span>
-                  {o.cost_done&&<span style={{fontSize:11,background:"var(--good-bg)",color:"var(--good)",borderRadius:5,padding:"1px 7px",fontWeight:700}}>✓ Done</span>}
+                  {o.product&&<span style={{fontSize:12,color:"var(--ink-3)",marginLeft:8}}>{o.product}</span>}
+                  {o.cost_done&&<span style={{fontSize:11,background:"var(--good-bg)",color:"var(--good)",borderRadius:5,padding:"1px 7px",fontWeight:700,marginLeft:8}}>✓ Done</span>}
                 </div>
-                <div style={{display:"flex",alignItems:"center",gap:8}}>
-                  <span className={"paybadge pay-"+(s?.payment??"Unpaid")}>{s?.payment??"Unpaid"}</span>
-                  <span style={{fontFamily:"var(--display)",fontWeight:700,fontSize:14,color:"var(--navy)"}}>{fmtIDR(Number(o.sell_idr||0))}</span>
-                  <ChevronRight size={14} style={{color:"var(--ink-3)",transform:isOpen?"rotate(90deg)":"none",transition:".15s",flexShrink:0}}/>
-                </div>
+                <span className={"paybadge pay-"+(s?.payment??"Unpaid")} style={{justifySelf:"center"}}>{s?.payment??"Unpaid"}</span>
+                <span style={{fontFamily:"var(--display)",fontWeight:700,fontSize:14,color:"var(--navy)",textAlign:"right"}}>{fmtIDR(Number(o.sell_idr||0))}</span>
+                <ChevronRight size={14} style={{color:"var(--ink-3)",transform:isOpen?"rotate(90deg)":"none",transition:".15s",justifySelf:"center"}}/>
               </div>
-              <TabStatusBar order={o}/>
+              <TabStatusBar order={o} style={{paddingLeft:30}}/>
             </button>
             {isOpen && <div style={{borderTop:"2px solid var(--navy)"}}><CostDoc ctx={ctx} order={o} reload={reload} onClose={()=>setOpenId(null)}/></div>}
           </div>
