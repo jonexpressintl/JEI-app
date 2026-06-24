@@ -1,5 +1,5 @@
 import { useState, useMemo, useRef, useEffect } from "react";
-import { Package, Ship, Truck, Eye, EyeOff, Search, ChevronRight, AlertCircle, CheckCircle2, FileText, Calculator, Tag, LayoutGrid, Plus, Printer, LogOut, RefreshCw, Pencil, Boxes, Circle, CreditCard, ExternalLink, Copy, Check, Download, Upload, Users, DollarSign, TrendingUp, Trash2, X } from "lucide-react";
+import { Package, Ship, Truck, Eye, EyeOff, Search, ChevronRight, AlertCircle, CheckCircle2, FileText, Calculator, Tag, LayoutGrid, Plus, Printer, LogOut, RefreshCw, Pencil, Boxes, Circle, CreditCard, ExternalLink, Copy, Check, Download, Upload, Users, DollarSign, TrendingUp, Trash2, X, Filter } from "lucide-react";
 import { useAuth } from "../lib/auth";
 import { useJEIData, updateCustomerRate, updateCustomer, addCustomer, setShipmentStage, setShipmentPayment, setShipmentTracking, completeOrder, markAsInvoiced, markTabDone, updateOrder, cascadeDeleteOrder, addCostEntry, updateCostEntry, deleteCostEntry } from "../lib/data";
 import { chargeable, finalizeCharged, fmtIDR, fmtShort, toIDR, trackingUrl, MIN_KG, IN_TO_CM, LB_TO_KG } from "../lib/pricing";
@@ -755,22 +755,91 @@ function CourierTable({couriers}){
 function Invoices({ctx}){
   const {D,custName,shipmentOf,reload,patchOrder}=ctx;
   const [q,setQ]=useState("");
-  // New flow: all non-completed orders appear here
+  const [filterCustomer,setFilterCustomer]=useState("");
+  const [filterPayment,setFilterPayment]=useState("");
+  const [filterStatus,setFilterStatus]=useState(""); // "pending"|"done"|""
+  const [filterStage,setFilterStage]=useState("");
+  const [filterDateFrom,setFilterDateFrom]=useState("");
+  const [filterDateTo,setFilterDateTo]=useState("");
+  const [showFilters,setShowFilters]=useState(false);
+
   const active=D.orders.filter(o=>!o.completed);
-  const filtered=active.filter(o=>[o.id,custName(o.customer_id),o.product].join(" ").toLowerCase().includes(q.toLowerCase()));
+
+  const filtered=active.filter(o=>{
+    const s=shipmentOf(o.shipment_id);
+    if(q && ![o.id,custName(o.customer_id),o.product,o.shipment_id].join(" ").toLowerCase().includes(q.toLowerCase())) return false;
+    if(filterCustomer && o.customer_id!==filterCustomer) return false;
+    if(filterPayment && (s?.payment??"Unpaid")!==filterPayment) return false;
+    if(filterStatus==="pending" && o.invoice_done) return false;
+    if(filterStatus==="done" && !o.invoice_done) return false;
+    if(filterStage && s?.stage!==filterStage) return false;
+    if(filterDateFrom && o.order_date && o.order_date<filterDateFrom) return false;
+    if(filterDateTo && o.order_date && o.order_date>filterDateTo) return false;
+    return true;
+  });
+
+  const activeFilters=[filterCustomer,filterPayment,filterStatus,filterStage,filterDateFrom,filterDateTo].filter(Boolean).length;
+  function clearFilters(){setFilterCustomer("");setFilterPayment("");setFilterStatus("");setFilterStage("");setFilterDateFrom("");setFilterDateTo("");}
+
   const [openId,setOpen]=useState(null);
 
   return(<>
     <div style={S.sectionLead}><h2 style={S.h2}>Invoices</h2>
       <p style={S.lead}>Review pricing, add invoice-level costs, set conversion rates, then click <b>"Mark Invoice Done"</b>. Once Shipment, Invoice and Cost are all done the order can be completed.</p></div>
-    <div style={{display:"flex",gap:10,marginBottom:14,flexWrap:"wrap",alignItems:"center"}}>
-      <div style={{...S.searchWrap,flex:1,maxWidth:320,marginBottom:0}}><Search size={15} style={{opacity:.5}}/><input style={S.search} placeholder="Search invoices…" value={q} onChange={e=>setQ(e.target.value)}/></div>
-      <span style={{fontSize:13,color:"var(--ink-3)"}}>{active.filter(o=>!o.invoice_done).length} pending · {active.filter(o=>o.invoice_done).length} done</span>
+
+    {/* Search + filter bar */}
+    <div style={{display:"flex",gap:8,marginBottom:8,flexWrap:"wrap",alignItems:"center"}}>
+      <div style={{...S.searchWrap,flex:1,minWidth:200,marginBottom:0}}><Search size={15} style={{opacity:.5}}/><input style={S.search} placeholder="Search orders…" value={q} onChange={e=>setQ(e.target.value)}/></div>
+      <button onClick={()=>setShowFilters(v=>!v)} style={{...S.secBtn,position:"relative"}}>
+        <Filter size={13}/> Filters {activeFilters>0&&<span style={{marginLeft:4,background:"var(--navy)",color:"#fff",borderRadius:10,fontSize:10,padding:"1px 6px",fontWeight:700}}>{activeFilters}</span>}
+      </button>
+      {activeFilters>0&&<button onClick={clearFilters} style={{...S.secBtn,color:"var(--bad)",borderColor:"var(--bad)",fontSize:12}}>✕ Clear</button>}
+      <span style={{fontSize:13,color:"var(--ink-3)",marginLeft:"auto"}}>{filtered.length} of {active.length} · {active.filter(o=>!o.invoice_done).length} pending</span>
     </div>
-    {filtered.length===0 && <div style={S.empty}>No active orders.</div>}
+
+    {showFilters&&(
+      <div style={{background:"var(--head)",border:"1px solid var(--line)",borderRadius:10,padding:"14px 16px",marginBottom:12,display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:10}}>
+        <label style={S.field}><span style={S.fLabel}>Customer</span>
+          <select style={S.input} value={filterCustomer} onChange={e=>setFilterCustomer(e.target.value)}>
+            <option value="">All customers</option>
+            {[...new Set(active.map(o=>o.customer_id))].map(id=><option key={id} value={id}>{custName(id)}</option>)}
+          </select>
+        </label>
+        <label style={S.field}><span style={S.fLabel}>Invoice status</span>
+          <select style={S.input} value={filterStatus} onChange={e=>setFilterStatus(e.target.value)}>
+            <option value="">All</option>
+            <option value="pending">Pending</option>
+            <option value="done">Done</option>
+          </select>
+        </label>
+        <label style={S.field}><span style={S.fLabel}>Payment</span>
+          <select style={S.input} value={filterPayment} onChange={e=>setFilterPayment(e.target.value)}>
+            <option value="">All</option>
+            {["Unpaid","Invoiced","Paid"].map(p=><option key={p} value={p}>{p}</option>)}
+          </select>
+        </label>
+        <label style={S.field}><span style={S.fLabel}>Shipment stage</span>
+          <select style={S.input} value={filterStage} onChange={e=>setFilterStage(e.target.value)}>
+            <option value="">All stages</option>
+            {STAGES.map(st=><option key={st} value={st}>{st}</option>)}
+          </select>
+        </label>
+        <label style={S.field}><span style={S.fLabel}>Order date from</span>
+          <input style={S.input} type="date" value={filterDateFrom} onChange={e=>setFilterDateFrom(e.target.value)}/>
+        </label>
+        <label style={S.field}><span style={S.fLabel}>Order date to</span>
+          <input style={S.input} type="date" value={filterDateTo} onChange={e=>setFilterDateTo(e.target.value)}/>
+        </label>
+      </div>
+    )}
+
+    {filtered.length===0 && <div style={S.empty}>No orders match the current filters.</div>}
     <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:14}}>
       {filtered.map(o=>{const s=shipmentOf(o.shipment_id);return(
-        <button key={o.id} onClick={()=>setOpen(openId===o.id?null:o.id)} style={{...S.shipCard,padding:"12px 16px",display:"flex",flexDirection:"column",gap:6,cursor:"pointer",border:openId===o.id?"2px solid var(--navy)":"1px solid var(--line)",background:openId===o.id?"var(--head)":"var(--card)",opacity:o.invoice_done?.8:1}}>
+        <button key={o.id} onClick={()=>setOpen(openId===o.id?null:o.id)}
+          style={{...S.shipCard,padding:"12px 16px",display:"flex",flexDirection:"column",justifyContent:"center",gap:6,cursor:"pointer",
+            border:openId===o.id?"2px solid var(--navy)":"1px solid var(--line)",
+            background:openId===o.id?"var(--head)":"var(--card)",opacity:o.invoice_done?.8:1}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
             <div style={{display:"flex",alignItems:"center",gap:10}}>
               <FileText size={15} style={{color:o.invoice_done?"var(--good)":"var(--navy)"}}/>
@@ -985,10 +1054,31 @@ function Costs({ctx}){
   const {D,custName,shipmentOf,courierOf,quote,reload,patchOrder}=ctx;
   const [q,setQ]=useState("");
   const [openId,setOpenId]=useState(null);
+  const [filterCustomer,setFilterCustomer]=useState("");
+  const [filterPayment,setFilterPayment]=useState("");
+  const [filterStatus,setFilterStatus]=useState("");
+  const [filterStage,setFilterStage]=useState("");
+  const [filterDateFrom,setFilterDateFrom]=useState("");
+  const [filterDateTo,setFilterDateTo]=useState("");
+  const [showFilters,setShowFilters]=useState(false);
 
-  // New flow: all non-completed orders appear here
   const active=D.orders.filter(o=>!o.completed);
-  const filtered=active.filter(o=>[o.id,custName(o.customer_id),o.product,o.shipment_id].join(" ").toLowerCase().includes(q.toLowerCase()));
+
+  const filtered=active.filter(o=>{
+    const s=shipmentOf(o.shipment_id);
+    if(q && ![o.id,custName(o.customer_id),o.product,o.shipment_id].join(" ").toLowerCase().includes(q.toLowerCase())) return false;
+    if(filterCustomer && o.customer_id!==filterCustomer) return false;
+    if(filterPayment && (s?.payment??"Unpaid")!==filterPayment) return false;
+    if(filterStatus==="pending" && o.cost_done) return false;
+    if(filterStatus==="done" && !o.cost_done) return false;
+    if(filterStage && s?.stage!==filterStage) return false;
+    if(filterDateFrom && o.order_date && o.order_date<filterDateFrom) return false;
+    if(filterDateTo && o.order_date && o.order_date>filterDateTo) return false;
+    return true;
+  });
+
+  const activeFilters=[filterCustomer,filterPayment,filterStatus,filterStage,filterDateFrom,filterDateTo].filter(Boolean).length;
+  function clearFilters(){setFilterCustomer("");setFilterPayment("");setFilterStatus("");setFilterStage("");setFilterDateFrom("");setFilterDateTo("");}
 
   return(<>
     <div style={S.sectionLead}>
@@ -999,17 +1089,62 @@ function Costs({ctx}){
       <Kpi label="Pending" value={active.filter(o=>!o.cost_done).length} sub="awaiting cost entry"/>
       <Kpi label="Cost done" value={active.filter(o=>o.cost_done).length} sub="waiting on other tabs"/>
     </section>
-    <div style={{...S.searchWrap,marginBottom:14}}>
-      <Search size={15} style={{opacity:.5}}/><input style={S.search} placeholder="Search orders…" value={q} onChange={e=>setQ(e.target.value)}/>
+
+    {/* Search + filter bar */}
+    <div style={{display:"flex",gap:8,marginBottom:8,flexWrap:"wrap",alignItems:"center"}}>
+      <div style={{...S.searchWrap,flex:1,minWidth:200,marginBottom:0}}><Search size={15} style={{opacity:.5}}/><input style={S.search} placeholder="Search orders…" value={q} onChange={e=>setQ(e.target.value)}/></div>
+      <button onClick={()=>setShowFilters(v=>!v)} style={{...S.secBtn,position:"relative"}}>
+        <Filter size={13}/> Filters {activeFilters>0&&<span style={{marginLeft:4,background:"var(--navy)",color:"#fff",borderRadius:10,fontSize:10,padding:"1px 6px",fontWeight:700}}>{activeFilters}</span>}
+      </button>
+      {activeFilters>0&&<button onClick={clearFilters} style={{...S.secBtn,color:"var(--bad)",borderColor:"var(--bad)",fontSize:12}}>✕ Clear</button>}
+      <span style={{fontSize:13,color:"var(--ink-3)",marginLeft:"auto"}}>{filtered.length} of {active.length}</span>
     </div>
-    {filtered.length===0&&<div style={S.empty}>{active.length===0?"No active orders.":"No orders match your search."}</div>}
+
+    {showFilters&&(
+      <div style={{background:"var(--head)",border:"1px solid var(--line)",borderRadius:10,padding:"14px 16px",marginBottom:12,display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:10}}>
+        <label style={S.field}><span style={S.fLabel}>Customer</span>
+          <select style={S.input} value={filterCustomer} onChange={e=>setFilterCustomer(e.target.value)}>
+            <option value="">All customers</option>
+            {[...new Set(active.map(o=>o.customer_id))].map(id=><option key={id} value={id}>{custName(id)}</option>)}
+          </select>
+        </label>
+        <label style={S.field}><span style={S.fLabel}>Cost status</span>
+          <select style={S.input} value={filterStatus} onChange={e=>setFilterStatus(e.target.value)}>
+            <option value="">All</option>
+            <option value="pending">Pending</option>
+            <option value="done">Done</option>
+          </select>
+        </label>
+        <label style={S.field}><span style={S.fLabel}>Payment</span>
+          <select style={S.input} value={filterPayment} onChange={e=>setFilterPayment(e.target.value)}>
+            <option value="">All</option>
+            {["Unpaid","Invoiced","Paid"].map(p=><option key={p} value={p}>{p}</option>)}
+          </select>
+        </label>
+        <label style={S.field}><span style={S.fLabel}>Shipment stage</span>
+          <select style={S.input} value={filterStage} onChange={e=>setFilterStage(e.target.value)}>
+            <option value="">All stages</option>
+            {STAGES.map(st=><option key={st} value={st}>{st}</option>)}
+          </select>
+        </label>
+        <label style={S.field}><span style={S.fLabel}>Order date from</span>
+          <input style={S.input} type="date" value={filterDateFrom} onChange={e=>setFilterDateFrom(e.target.value)}/>
+        </label>
+        <label style={S.field}><span style={S.fLabel}>Order date to</span>
+          <input style={S.input} type="date" value={filterDateTo} onChange={e=>setFilterDateTo(e.target.value)}/>
+        </label>
+      </div>
+    )}
+
+    {filtered.length===0&&<div style={S.empty}>{active.length===0?"No active orders.":"No orders match the current filters."}</div>}
     <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:14}}>
       {filtered.map(o=>{
         const s=shipmentOf(o.shipment_id);
         return(
           <button key={o.id} onClick={()=>setOpenId(openId===o.id?null:o.id)}
-            style={{...S.shipCard,padding:"12px 16px",display:"flex",flexDirection:"column",gap:6,cursor:"pointer",
-              border:openId===o.id?"2px solid var(--navy)":"1px solid var(--line)",background:openId===o.id?"var(--head)":"var(--card)",opacity:o.cost_done?.8:1}}>
+            style={{...S.shipCard,padding:"12px 16px",display:"flex",flexDirection:"column",justifyContent:"center",gap:6,cursor:"pointer",
+              border:openId===o.id?"2px solid var(--navy)":"1px solid var(--line)",
+              background:openId===o.id?"var(--head)":"var(--card)",opacity:o.cost_done?.8:1}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
               <div style={{display:"flex",alignItems:"center",gap:10}}>
                 <CreditCard size={15} style={{color:o.cost_done?"var(--good)":"var(--navy)"}}/>
