@@ -196,6 +196,7 @@ const stageIcon = (st)=>{const i=STAGES.indexOf(st);if(i<=0)return <Package size
 
 // ──────────── TAB STATUS BAR ────────────
 // Shows 3 dots: Shipment · Invoice · Cost — green when done
+// Fixed-width layout so dots align perfectly across all card rows
 function TabStatusBar({order, style={}}){
   const tabs=[
     {key:"shipment",label:"Shipment"},
@@ -203,13 +204,13 @@ function TabStatusBar({order, style={}}){
     {key:"cost",    label:"Cost"},
   ];
   return(
-    <div style={{display:"flex",alignItems:"center",gap:12,...style}}>
+    <div style={{display:"flex",alignItems:"center",gap:0,...style}}>
       {tabs.map(t=>{
         const done=!!order?.[`${t.key}_done`];
         return(
-          <div key={t.key} style={{display:"flex",alignItems:"center",gap:5}}>
-            <div style={{width:10,height:10,borderRadius:"50%",background:done?"var(--good)":"var(--line)",border:done?"none":"1px solid var(--ink-3)",flexShrink:0,transition:"background .2s"}}/>
-            <span style={{fontSize:11,color:done?"var(--good)":"var(--ink-3)",fontWeight:done?700:400}}>{t.label}</span>
+          <div key={t.key} style={{display:"flex",alignItems:"center",gap:4,width:80,flexShrink:0}}>
+            <div style={{width:8,height:8,borderRadius:"50%",background:done?"var(--good)":"var(--line)",border:done?"none":"1px solid var(--ink-3)",flexShrink:0,transition:"background .2s"}}/>
+            <span style={{fontSize:11,color:done?"var(--good)":"var(--ink-3)",fontWeight:done?700:400,whiteSpace:"nowrap"}}>{t.label}</span>
           </div>
         );
       })}
@@ -451,7 +452,10 @@ function Shipments({ctx}){
                         patchOrder&&patchOrder(o.id,{shipment_done:true});
                       }}><Check size={11}/> Mark Shipment Done</button>
                     ):(
-                      <span style={{fontSize:11,color:"var(--good)",fontWeight:700}}>✓ Shipment done</span>
+                      <button style={{...S.secBtn,fontSize:11,padding:"3px 10px",color:"var(--ink-3)"}} onClick={async()=>{
+                        await markTabDone(o.id,"shipment",false);
+                        patchOrder&&patchOrder(o.id,{shipment_done:false});
+                      }}>↩ Undo</button>
                     )}
                   </div>
                 ))}
@@ -954,7 +958,11 @@ function InvoiceDoc({ctx,order,onClose,reload}){
             }}><Check size={13}/> Mark Invoice Done</button>
           )}
           {order.invoice_done && !order.completed && (
-            <span style={{fontSize:12,color:"var(--good)",fontWeight:700}}>✓ Invoice done</span>
+            <button style={{...S.secBtn,color:"var(--ink-3)",fontSize:12}} onClick={async()=>{
+              const patch={invoice_done:false,invoiced:false,invoiced_at:null};
+              await updateOrder(order.id,patch);
+              patchOrder&&patchOrder(order.id,patch);
+            }}>↩ Undo</button>
           )}
         </div>
       </div>
@@ -1187,7 +1195,11 @@ function CostDoc({ctx,order,reload,onClose}){
             </button>
           )}
           {order.cost_done && !order.completed && (
-            <span style={{fontSize:12,color:"var(--good)",fontWeight:700}}>✓ Cost done</span>
+            <button style={{...S.secBtn,color:"var(--ink-3)",fontSize:12}} onClick={async()=>{
+              const patch={cost_done:false};
+              await updateOrder(order.id,patch);
+              patchOrder&&patchOrder(order.id,patch);
+            }}>↩ Undo Cost</button>
           )}
         </div>
       </div>
