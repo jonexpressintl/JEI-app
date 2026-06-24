@@ -400,7 +400,6 @@ function Shipments({ctx}){
                 <div style={{display:"flex",alignItems:"center",gap:8}}>
                   <span style={{fontFamily:"var(--mono)",fontWeight:700,fontSize:15}}>{s.id}</span>
                   <span style={{fontSize:12.5,color:"var(--ink-3)"}}>{courierOf(s.courier_id)?.name} · ÷{courierOf(s.courier_id)?.divisor}</span>
-                  <span className={"paybadge pay-"+s.payment}>{s.payment}</span>
                 </div>
                 <div style={{fontSize:12.5,color:"var(--ink-3)",marginTop:3}}>
                   {orders.length} order{orders.length!==1?"s":""}: {orders.map(o=>custName(o.customer_id)).join(", ")||"—"}
@@ -429,17 +428,6 @@ function Shipments({ctx}){
                   </button>
                 );
               })}
-            </div>
-
-            {/* payment control */}
-            <div style={S.payRow}>
-              <span style={{fontSize:12.5,color:"var(--ink-3)",display:"flex",alignItems:"center",gap:6}}><CreditCard size={14}/> Payment · updated {fmtDate(s.payment_updated_at)}</span>
-              <div style={{display:"flex",gap:6}}>
-                {PAYMENTS.map(p=>(
-                  <button key={p} onClick={()=>setPay(s.id,p)} disabled={busy===s.id+p}
-                    className={"payseg "+(s.payment===p?"on pay-"+p:"")}>{p}</button>
-                ))}
-              </div>
             </div>
 
             {/* Order info panel — sits where payment row used to be */}
