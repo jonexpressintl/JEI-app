@@ -325,7 +325,21 @@ function Shipments({ctx}){
   const [q,setQ]=useState("");
   const [stageFilter,setStageFilter]=useState(null); // null = all stages
 
-  async function advance(sid,stage){setBusy(sid+stage);await setShipmentStage(sid,stage);await reload();setBusy(null);}
+  async function advance(sid,stage){
+    setBusy(sid+stage);
+    await setShipmentStage(sid,stage);
+    // Auto-sync shipment_done on all orders in this shipment based on stage
+    const isDelivered = stage==="Delivered to customer";
+    const ordersInShipment = D.orders.filter(o=>o.shipment_id===sid&&!o.completed);
+    await Promise.all(ordersInShipment.map(async o=>{
+      if(!!o.shipment_done !== isDelivered){
+        await markTabDone(o.id,"shipment",isDelivered);
+        patchOrder&&patchOrder(o.id,{shipment_done:isDelivered});
+      }
+    }));
+    await reload();
+    setBusy(null);
+  }
   async function setPay(sid,payment){setBusy(sid+payment);await setShipmentPayment(sid,payment);await reload();setBusy(null);}
 
   // Only show shipments that have at least one order
@@ -446,17 +460,10 @@ function Shipments({ctx}){
                       <span style={{fontWeight:600,fontSize:13}}>{custName(o.customer_id)}</span>
                       <TabStatusBar order={o}/>
                     </div>
-                    {!o.shipment_done?(
-                      <button style={{...S.printBtn,fontSize:11,padding:"4px 12px",background:"var(--navy)"}} onClick={async()=>{
-                        await markTabDone(o.id,"shipment",true);
-                        patchOrder&&patchOrder(o.id,{shipment_done:true});
-                      }}><Check size={11}/> Mark Shipment Done</button>
-                    ):(
-                      <button style={{...S.secBtn,fontSize:11,padding:"3px 10px",color:"var(--ink-3)"}} onClick={async()=>{
-                        await markTabDone(o.id,"shipment",false);
-                        patchOrder&&patchOrder(o.id,{shipment_done:false});
-                      }}>↩ Undo</button>
-                    )}
+                    {o.shipment_done
+                      ? <span style={{fontSize:11,color:"var(--good)",fontWeight:700}}>✓ Delivered</span>
+                      : <span style={{fontSize:11,color:"var(--ink-3)"}}>Awaiting delivery</span>
+                    }
                   </div>
                 ))}
               </div>
@@ -763,19 +770,21 @@ function Invoices({ctx}){
     {filtered.length===0 && <div style={S.empty}>No active orders.</div>}
     <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:14}}>
       {filtered.map(o=>{const s=shipmentOf(o.shipment_id);return(
-        <button key={o.id} onClick={()=>setOpen(openId===o.id?null:o.id)} style={{...S.shipCard,padding:"12px 16px",display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer",border:openId===o.id?"2px solid var(--navy)":"1px solid var(--line)",background:openId===o.id?"var(--head)":"var(--card)",opacity:o.invoice_done?.8:1}}>
-          <div style={{display:"flex",alignItems:"center",gap:10}}>
-            <FileText size={15} style={{color:o.invoice_done?"var(--good)":"var(--navy)"}}/>
-            <span style={{fontFamily:"var(--mono)",fontWeight:700,fontSize:13}}>{o.id}</span>
-            <span style={{fontWeight:600}}>{custName(o.customer_id)}</span>
-            <span style={{fontSize:12.5,color:"var(--ink-3)"}}>{o.product}</span>
-            {o.invoice_done&&<span style={{fontSize:11,background:"var(--good-bg)",color:"var(--good)",borderRadius:5,padding:"1px 7px",fontWeight:700}}>✓ Done</span>}
+        <button key={o.id} onClick={()=>setOpen(openId===o.id?null:o.id)} style={{...S.shipCard,padding:"12px 16px",display:"flex",flexDirection:"column",gap:6,cursor:"pointer",border:openId===o.id?"2px solid var(--navy)":"1px solid var(--line)",background:openId===o.id?"var(--head)":"var(--card)",opacity:o.invoice_done?.8:1}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <div style={{display:"flex",alignItems:"center",gap:10}}>
+              <FileText size={15} style={{color:o.invoice_done?"var(--good)":"var(--navy)"}}/>
+              <span style={{fontFamily:"var(--mono)",fontWeight:700,fontSize:13}}>{o.id}</span>
+              <span style={{fontWeight:600}}>{custName(o.customer_id)}</span>
+              <span style={{fontSize:12.5,color:"var(--ink-3)"}}>{o.product}</span>
+              {o.invoice_done&&<span style={{fontSize:11,background:"var(--good-bg)",color:"var(--good)",borderRadius:5,padding:"1px 7px",fontWeight:700}}>✓ Done</span>}
+            </div>
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
+              <span className={"paybadge pay-"+(s?.payment??"Unpaid")}>{s?.payment??"Unpaid"}</span>
+              <span style={{fontFamily:"var(--display)",fontWeight:700,fontSize:14}}>{fmtIDR(Number(o.sell_idr||0))}</span>
+            </div>
           </div>
-          <div style={{display:"flex",alignItems:"center",gap:8}}>
-            <TabStatusBar order={o}/>
-            <span className={"paybadge pay-"+(s?.payment??"Unpaid")}>{s?.payment??"Unpaid"}</span>
-            <span style={{fontFamily:"var(--display)",fontWeight:700,fontSize:14}}>{fmtIDR(Number(o.sell_idr||0))}</span>
-          </div>
+          <TabStatusBar order={o}/>
         </button>
       );})}
     </div>
@@ -999,21 +1008,23 @@ function Costs({ctx}){
         const s=shipmentOf(o.shipment_id);
         return(
           <button key={o.id} onClick={()=>setOpenId(openId===o.id?null:o.id)}
-            style={{...S.shipCard,padding:"12px 16px",display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer",
+            style={{...S.shipCard,padding:"12px 16px",display:"flex",flexDirection:"column",gap:6,cursor:"pointer",
               border:openId===o.id?"2px solid var(--navy)":"1px solid var(--line)",background:openId===o.id?"var(--head)":"var(--card)",opacity:o.cost_done?.8:1}}>
-            <div style={{display:"flex",alignItems:"center",gap:10}}>
-              <CreditCard size={15} style={{color:o.cost_done?"var(--good)":"var(--navy)"}}/>
-              <span style={{fontFamily:"var(--mono)",fontWeight:700,fontSize:13}}>{o.id}</span>
-              <span style={{fontWeight:600}}>{custName(o.customer_id)}</span>
-              <span style={{fontSize:12.5,color:"var(--ink-3)"}}>{o.product}</span>
-              {o.cost_done&&<span style={{fontSize:11,background:"var(--good-bg)",color:"var(--good)",borderRadius:5,padding:"1px 7px",fontWeight:700}}>✓ Done</span>}
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div style={{display:"flex",alignItems:"center",gap:10}}>
+                <CreditCard size={15} style={{color:o.cost_done?"var(--good)":"var(--navy)"}}/>
+                <span style={{fontFamily:"var(--mono)",fontWeight:700,fontSize:13}}>{o.id}</span>
+                <span style={{fontWeight:600}}>{custName(o.customer_id)}</span>
+                <span style={{fontSize:12.5,color:"var(--ink-3)"}}>{o.product}</span>
+                {o.cost_done&&<span style={{fontSize:11,background:"var(--good-bg)",color:"var(--good)",borderRadius:5,padding:"1px 7px",fontWeight:700}}>✓ Done</span>}
+              </div>
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <span className={"paybadge pay-"+(s?.payment??"Unpaid")}>{s?.payment??"Unpaid"}</span>
+                <span style={{fontFamily:"var(--display)",fontWeight:700,fontSize:14,color:"var(--navy)"}}>{fmtIDR(Number(o.sell_idr||0))}</span>
+                <ChevronRight size={14} style={{color:"var(--ink-3)",transform:openId===o.id?"rotate(90deg)":"none",transition:".15s"}}/>
+              </div>
             </div>
-            <div style={{display:"flex",alignItems:"center",gap:8}}>
-              <TabStatusBar order={o}/>
-              <span className={"paybadge pay-"+(s?.payment??"Unpaid")}>{s?.payment??"Unpaid"}</span>
-              <span style={{fontFamily:"var(--display)",fontWeight:700,fontSize:14,color:"var(--navy)"}}>{fmtIDR(Number(o.sell_idr||0))}</span>
-              <ChevronRight size={14} style={{color:"var(--ink-3)",transform:openId===o.id?"rotate(90deg)":"none",transition:".15s"}}/>
-            </div>
+            <TabStatusBar order={o}/>
           </button>
         );
       })}
