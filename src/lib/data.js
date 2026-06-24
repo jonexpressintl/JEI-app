@@ -155,6 +155,10 @@ export const markAsInvoiced = (id, patch) =>
 export const completeOrder = (id, patch) =>
   supabase.from("orders").update({ completed: true, completed_at: new Date().toISOString(), ...patch }).eq("id", id);
 
+// Per-tab done flags (new parallel flow)
+export const markTabDone = (id, tab, done = true) =>
+  supabase.from("orders").update({ [`${tab}_done`]: done }).eq("id", id);
+
 // ── Cost entries ──
 export const getCostEntries = () =>
   supabase.from("cost_entries").select("*").order("cost_date", { ascending: false });

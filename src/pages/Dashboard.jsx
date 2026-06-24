@@ -1,7 +1,7 @@
 import { useState, useMemo, useRef, useEffect } from "react";
 import { Package, Ship, Truck, Eye, EyeOff, Search, ChevronRight, AlertCircle, CheckCircle2, FileText, Calculator, Tag, LayoutGrid, Plus, Printer, LogOut, RefreshCw, Pencil, Boxes, Circle, CreditCard, ExternalLink, Copy, Check, Download, Upload, Users, DollarSign, TrendingUp, Trash2, X } from "lucide-react";
 import { useAuth } from "../lib/auth";
-import { useJEIData, updateCustomerRate, updateCustomer, addCustomer, setShipmentStage, setShipmentPayment, setShipmentTracking, completeOrder, markAsInvoiced, updateOrder, cascadeDeleteOrder, addCostEntry, updateCostEntry, deleteCostEntry } from "../lib/data";
+import { useJEIData, updateCustomerRate, updateCustomer, addCustomer, setShipmentStage, setShipmentPayment, setShipmentTracking, completeOrder, markAsInvoiced, markTabDone, updateOrder, cascadeDeleteOrder, addCostEntry, updateCostEntry, deleteCostEntry } from "../lib/data";
 import { chargeable, finalizeCharged, fmtIDR, fmtShort, toIDR, trackingUrl, MIN_KG, IN_TO_CM, LB_TO_KG } from "../lib/pricing";
 import { generateInvoicePDF, generateQuotationPDF } from "../lib/pdf";
 import ConfirmDialog from "../components/ConfirmDialog";
@@ -194,6 +194,56 @@ export default function Dashboard() {
 
 const stageIcon = (st)=>{const i=STAGES.indexOf(st);if(i<=0)return <Package size={14}/>;if(i<=3)return <Ship size={14}/>;if(i===STAGES.length-1)return <CheckCircle2 size={14}/>;return <Truck size={14}/>;};
 
+// ──────────── TAB STATUS BAR ────────────
+// Shows 3 dots: Shipment · Invoice · Cost — green when done
+function TabStatusBar({order, style={}}){
+  const tabs=[
+    {key:"shipment",label:"Shipment"},
+    {key:"invoice", label:"Invoice"},
+    {key:"cost",    label:"Cost"},
+  ];
+  return(
+    <div style={{display:"flex",alignItems:"center",gap:12,...style}}>
+      {tabs.map(t=>{
+        const done=!!order?.[`${t.key}_done`];
+        return(
+          <div key={t.key} style={{display:"flex",alignItems:"center",gap:5}}>
+            <div style={{width:10,height:10,borderRadius:"50%",background:done?"var(--good)":"var(--line)",border:done?"none":"1px solid var(--ink-3)",flexShrink:0,transition:"background .2s"}}/>
+            <span style={{fontSize:11,color:done?"var(--good)":"var(--ink-3)",fontWeight:done?700:400}}>{t.label}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ──────────── COMPLETE ALL BUTTON ────────────
+// Shown in all 3 tabs once shipment_done + invoice_done + cost_done are all true
+function CompleteAllButton({order,ctx,onDone}){
+  const {patchOrder}=ctx;
+  const allDone=order?.shipment_done&&order?.invoice_done&&order?.cost_done;
+  const [busy,setBusy]=useState(false);
+  if(!allDone||order?.completed) return null;
+  async function handle(){
+    setBusy(true);
+    await completeOrder(order.id,{sell_idr:order.sell_idr||0});
+    patchOrder&&patchOrder(order.id,{completed:true,completed_at:new Date().toISOString()});
+    onDone&&onDone();
+    setBusy(false);
+  }
+  return(
+    <div style={{background:"var(--good-bg)",border:"1px solid var(--good)",borderRadius:10,padding:"12px 16px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,marginTop:16}}>
+      <div style={{display:"flex",alignItems:"center",gap:8}}>
+        <CheckCircle2 size={16} style={{color:"var(--good)"}}/>
+        <span style={{fontWeight:700,color:"var(--good)",fontSize:13}}>All tabs completed — ready to archive</span>
+      </div>
+      <button style={{...S.printBtn,background:"var(--good)",minWidth:160}} onClick={handle} disabled={busy}>
+        {busy?"Moving…":"✓ Move to Completed"}
+      </button>
+    </div>
+  );
+}
+
 // ──────────── ORDERS ────────────
 function Orders({ctx}){
   const {D,isOwner,custName,courierOf,shipmentOf,quote,orderCostIDR,reload}=ctx;
@@ -269,7 +319,7 @@ function Orders({ctx}){
 
 // ──────────── SHIPMENTS (checkpoint tracking) ────────────
 function Shipments({ctx}){
-  const {D,custName,courierOf,reload}=ctx;
+  const {D,custName,courierOf,reload,patchOrder}=ctx;
   const [busy,setBusy]=useState(null);
   const [q,setQ]=useState("");
   const [stageFilter,setStageFilter]=useState(null); // null = all stages
@@ -383,6 +433,30 @@ function Shipments({ctx}){
                 ))}
               </div>
             </div>
+
+            {/* Per-order shipment done flags */}
+            {orders.length>0&&(
+              <div style={{borderTop:"1px solid var(--line)",padding:"10px 0 4px",display:"flex",flexDirection:"column",gap:8}}>
+                <div style={{fontSize:11,fontWeight:700,color:"var(--ink-3)",letterSpacing:".04em",marginBottom:2}}>ORDER SHIPMENT STATUS</div>
+                {orders.filter(o=>!o.completed).map(o=>(
+                  <div key={o.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"6px 8px",background:"var(--head)",borderRadius:8}}>
+                    <div style={{display:"flex",alignItems:"center",gap:8}}>
+                      <span style={{fontFamily:"var(--mono)",fontSize:12,color:"var(--ink-3)"}}>{o.id}</span>
+                      <span style={{fontWeight:600,fontSize:13}}>{custName(o.customer_id)}</span>
+                      <TabStatusBar order={o}/>
+                    </div>
+                    {!o.shipment_done?(
+                      <button style={{...S.printBtn,fontSize:11,padding:"4px 12px",background:"var(--navy)"}} onClick={async()=>{
+                        await markTabDone(o.id,"shipment",true);
+                        patchOrder&&patchOrder(o.id,{shipment_done:true});
+                      }}><Check size={11}/> Mark Shipment Done</button>
+                    ):(
+                      <span style={{fontSize:11,color:"var(--good)",fontWeight:700}}>✓ Shipment done</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         );
       })}
@@ -670,47 +744,42 @@ function CourierTable({couriers}){
 function Invoices({ctx}){
   const {D,custName,shipmentOf,reload,patchOrder}=ctx;
   const [q,setQ]=useState("");
-  const delivered=D.orders.filter(o=>shipmentOf(o.shipment_id)?.stage==="Delivered to customer");
-  // Invoices tab: delivered, not yet invoiced, not completed
-  const active=delivered.filter(o=>!o.invoiced&&!o.completed);
+  // New flow: all non-completed orders appear here
+  const active=D.orders.filter(o=>!o.completed);
   const filtered=active.filter(o=>[o.id,custName(o.customer_id),o.product].join(" ").toLowerCase().includes(q.toLowerCase()));
   const [openId,setOpen]=useState(null);
 
-  async function handleMarkInvoiced(orderId, patch){
-    await markAsInvoiced(orderId, patch);
-    setOpen(null);
-    reload();
-  }
-
   return(<>
     <div style={S.sectionLead}><h2 style={S.h2}>Invoices</h2>
-      <p style={S.lead}>Delivered orders ready to invoice. Review pricing, add invoice-level costs, set conversion rates, then click <b>"Mark as Invoiced"</b> to move to the Costs tab for final profit calculation.</p></div>
+      <p style={S.lead}>Review pricing, add invoice-level costs, set conversion rates, then click <b>"Mark Invoice Done"</b>. Once Shipment, Invoice and Cost are all done the order can be completed.</p></div>
     <div style={{display:"flex",gap:10,marginBottom:14,flexWrap:"wrap",alignItems:"center"}}>
       <div style={{...S.searchWrap,flex:1,maxWidth:320,marginBottom:0}}><Search size={15} style={{opacity:.5}}/><input style={S.search} placeholder="Search invoices…" value={q} onChange={e=>setQ(e.target.value)}/></div>
-      <span style={{fontSize:13,color:"var(--ink-3)"}}>{active.length} pending</span>
+      <span style={{fontSize:13,color:"var(--ink-3)"}}>{active.filter(o=>!o.invoice_done).length} pending · {active.filter(o=>o.invoice_done).length} done</span>
     </div>
-    {filtered.length===0 && <div style={S.empty}>No active invoices — all delivered orders have been invoiced.</div>}
+    {filtered.length===0 && <div style={S.empty}>No active orders.</div>}
     <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:14}}>
       {filtered.map(o=>{const s=shipmentOf(o.shipment_id);return(
-        <button key={o.id} onClick={()=>setOpen(openId===o.id?null:o.id)} style={{...S.shipCard,padding:"12px 16px",display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer",border:openId===o.id?"2px solid var(--navy)":"1px solid var(--line)",background:openId===o.id?"var(--head)":"var(--card)"}}>
+        <button key={o.id} onClick={()=>setOpen(openId===o.id?null:o.id)} style={{...S.shipCard,padding:"12px 16px",display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer",border:openId===o.id?"2px solid var(--navy)":"1px solid var(--line)",background:openId===o.id?"var(--head)":"var(--card)",opacity:o.invoice_done?.8:1}}>
           <div style={{display:"flex",alignItems:"center",gap:10}}>
-            <FileText size={15} style={{color:"var(--navy)"}}/>
+            <FileText size={15} style={{color:o.invoice_done?"var(--good)":"var(--navy)"}}/>
             <span style={{fontFamily:"var(--mono)",fontWeight:700,fontSize:13}}>{o.id}</span>
             <span style={{fontWeight:600}}>{custName(o.customer_id)}</span>
             <span style={{fontSize:12.5,color:"var(--ink-3)"}}>{o.product}</span>
+            {o.invoice_done&&<span style={{fontSize:11,background:"var(--good-bg)",color:"var(--good)",borderRadius:5,padding:"1px 7px",fontWeight:700}}>✓ Done</span>}
           </div>
           <div style={{display:"flex",alignItems:"center",gap:8}}>
+            <TabStatusBar order={o}/>
             <span className={"paybadge pay-"+(s?.payment??"Unpaid")}>{s?.payment??"Unpaid"}</span>
             <span style={{fontFamily:"var(--display)",fontWeight:700,fontSize:14}}>{fmtIDR(Number(o.sell_idr||0))}</span>
           </div>
         </button>
       );})}
     </div>
-    {openId && <InvoiceDoc ctx={ctx} order={filtered.find(o=>o.id===openId)} onComplete={handleMarkInvoiced} reload={reload}/>}
+    {openId && <InvoiceDoc ctx={ctx} order={filtered.find(o=>o.id===openId)} onClose={()=>setOpen(null)} reload={reload}/>}
   </>);
 }
 
-function InvoiceDoc({ctx,order,onComplete,reload}){
+function InvoiceDoc({ctx,order,onClose,reload}){
   const {D,custName,courierOf,shipmentOf,quote,patchOrder}=ctx;
   const q=quote(order);const s=shipmentOf(order.shipment_id);const c=courierOf(s?.courier_id);
   const invNo="INV-"+order.id.replace("ORD-","");
@@ -874,15 +943,22 @@ function InvoiceDoc({ctx,order,onComplete,reload}){
 
       <div style={S.invTotal}><span>Total due</span><span style={{fontFamily:"var(--display)",fontSize:22,fontWeight:800,color:"var(--navy)"}}>{fmtIDR(grandTotalIDR)}</span></div>
       <div style={S.invFoot}><span>Payment in IDR within 14 days · Bank transfer to JEI account</span>
-        <div style={{display:"flex",gap:8}}>
+        <div style={{display:"flex",gap:8,alignItems:"center"}}>
+          <TabStatusBar order={order}/>
           <button style={S.printBtn} onClick={downloadPDF}><Download size={13}/> Download PDF</button>
-          {!order.invoiced && !order.completed && onComplete && <button style={{...S.printBtn,background:"var(--warn)",color:"#fff"}} onClick={async()=>{
-            // Save current rates + total before marking invoiced
-            const patch={invoice_usd_rate:+usdRate||null,invoice_sgd_rate:+sgdRate||null,sell_idr:Math.round(grandTotalIDR)};
-            await updateOrder(order.id,patch);
-            onComplete(order.id, patch);
-          }}><Check size={13}/> Mark as Invoiced</button>}
-        </div></div>
+          {!order.invoice_done && !order.completed && (
+            <button style={{...S.printBtn,background:"var(--warn)",color:"#fff"}} onClick={async()=>{
+              const patch={invoice_usd_rate:+usdRate||null,invoice_sgd_rate:+sgdRate||null,sell_idr:Math.round(grandTotalIDR),invoice_done:true,invoiced:true,invoiced_at:new Date().toISOString()};
+              await updateOrder(order.id,patch);
+              patchOrder&&patchOrder(order.id,patch);
+            }}><Check size={13}/> Mark Invoice Done</button>
+          )}
+          {order.invoice_done && !order.completed && (
+            <span style={{fontSize:12,color:"var(--good)",fontWeight:700}}>✓ Invoice done</span>
+          )}
+        </div>
+      </div>
+      <CompleteAllButton order={order} ctx={ctx} onDone={onClose}/>
     </div>);
 }
 
@@ -893,37 +969,39 @@ function Costs({ctx}){
   const [q,setQ]=useState("");
   const [openId,setOpenId]=useState(null);
 
-  // Invoiced orders waiting for cost review before completing
-  const invoiced=D.orders.filter(o=>o.invoiced&&!o.completed);
-  const filtered=invoiced.filter(o=>[o.id,custName(o.customer_id),o.product,o.shipment_id].join(" ").toLowerCase().includes(q.toLowerCase()));
+  // New flow: all non-completed orders appear here
+  const active=D.orders.filter(o=>!o.completed);
+  const filtered=active.filter(o=>[o.id,custName(o.customer_id),o.product,o.shipment_id].join(" ").toLowerCase().includes(q.toLowerCase()));
 
   return(<>
     <div style={S.sectionLead}>
       <h2 style={S.h2}>Costs</h2>
-      <p style={S.lead}>Orders move here after invoicing. Add operational costs, set conversion rates, review net profit — then click <b>"Complete"</b> to archive.</p>
+      <p style={S.lead}>Add operational costs for each order, review net profit — then click <b>"Mark Cost Done"</b>. Once Shipment, Invoice and Cost are all done the order can be completed.</p>
     </div>
     <section style={S.kpis}>
-      <Kpi label="Pending" value={invoiced.length} sub="awaiting cost review"/>
-      <Kpi label="Showing" value={filtered.length} sub="after search"/>
+      <Kpi label="Pending" value={active.filter(o=>!o.cost_done).length} sub="awaiting cost entry"/>
+      <Kpi label="Cost done" value={active.filter(o=>o.cost_done).length} sub="waiting on other tabs"/>
     </section>
     <div style={{...S.searchWrap,marginBottom:14}}>
       <Search size={15} style={{opacity:.5}}/><input style={S.search} placeholder="Search orders…" value={q} onChange={e=>setQ(e.target.value)}/>
     </div>
-    {filtered.length===0&&<div style={S.empty}>{invoiced.length===0?"No orders pending cost review — mark invoices as invoiced first.":"No orders match your search."}</div>}
+    {filtered.length===0&&<div style={S.empty}>{active.length===0?"No active orders.":"No orders match your search."}</div>}
     <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:14}}>
       {filtered.map(o=>{
         const s=shipmentOf(o.shipment_id);
         return(
           <button key={o.id} onClick={()=>setOpenId(openId===o.id?null:o.id)}
             style={{...S.shipCard,padding:"12px 16px",display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer",
-              border:openId===o.id?"2px solid var(--navy)":"1px solid var(--line)",background:openId===o.id?"var(--head)":"var(--card)"}}>
+              border:openId===o.id?"2px solid var(--navy)":"1px solid var(--line)",background:openId===o.id?"var(--head)":"var(--card)",opacity:o.cost_done?.8:1}}>
             <div style={{display:"flex",alignItems:"center",gap:10}}>
-              <CreditCard size={15} style={{color:"var(--navy)"}}/>
+              <CreditCard size={15} style={{color:o.cost_done?"var(--good)":"var(--navy)"}}/>
               <span style={{fontFamily:"var(--mono)",fontWeight:700,fontSize:13}}>{o.id}</span>
               <span style={{fontWeight:600}}>{custName(o.customer_id)}</span>
               <span style={{fontSize:12.5,color:"var(--ink-3)"}}>{o.product}</span>
+              {o.cost_done&&<span style={{fontSize:11,background:"var(--good-bg)",color:"var(--good)",borderRadius:5,padding:"1px 7px",fontWeight:700}}>✓ Done</span>}
             </div>
             <div style={{display:"flex",alignItems:"center",gap:8}}>
+              <TabStatusBar order={o}/>
               <span className={"paybadge pay-"+(s?.payment??"Unpaid")}>{s?.payment??"Unpaid"}</span>
               <span style={{fontFamily:"var(--display)",fontWeight:700,fontSize:14,color:"var(--navy)"}}>{fmtIDR(Number(o.sell_idr||0))}</span>
               <ChevronRight size={14} style={{color:"var(--ink-3)",transform:openId===o.id?"rotate(90deg)":"none",transition:".15s"}}/>
@@ -948,7 +1026,6 @@ function CostDoc({ctx,order,reload,onClose}){
   const [usdRate,setUsdRate]=useState(String(order.invoice_usd_rate||""));
   const [sgdRate,setSgdRate]=useState(String(order.invoice_sgd_rate||""));
   const [saving,setSaving]=useState(false);
-  const [reverting,setReverting]=useState(false);
 
   // Local cost entries — start from DB, update optimistically
   const [localCosts,setLocalCosts]=useState(()=>(D.costEntries||[]).filter(e=>e.order_id===order.id));
@@ -989,20 +1066,6 @@ function CostDoc({ctx,order,reload,onClose}){
     await updateOrder(order.id,{invoice_usd_rate:+usdRate||null,invoice_sgd_rate:+sgdRate||null});
     // Patch local order state so totals update without reload
     patchOrder&&patchOrder(order.id,{invoice_usd_rate:+usdRate||null,invoice_sgd_rate:+sgdRate||null});
-    setSaving(false);
-  }
-  async function doRevert(){
-    setReverting(true);
-    await updateOrder(order.id,{invoiced:false,invoiced_at:null});
-    onClose();
-    reload();
-    setReverting(false);
-  }
-  async function doComplete(){
-    setSaving(true);
-    await completeOrder(order.id,{invoice_usd_rate:+usdRate||null,invoice_sgd_rate:+sgdRate||null,sell_idr:Math.round(revenueIDR)});
-    onClose();
-    reload();
     setSaving(false);
   }
 
@@ -1107,16 +1170,28 @@ function CostDoc({ctx,order,reload,onClose}){
       </div>
 
       <div style={S.invFoot}>
-        <div style={{display:"flex",gap:8}}>
+        <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
           <button style={S.secBtn} onClick={onClose}>← Back</button>
-          <button style={{...S.secBtn,color:"var(--warn)",borderColor:"var(--warn)"}} onClick={doRevert} disabled={reverting}>
-            <RefreshCw size={13}/> {reverting?"Reverting…":"Revert to invoice"}
-          </button>
+          <TabStatusBar order={order}/>
         </div>
-        <button style={{...S.printBtn,background:"var(--good)",color:"#fff",fontSize:14,padding:"10px 20px"}} onClick={doComplete} disabled={saving}>
-          <Check size={14}/> {saving?"Completing…":"Complete"}
-        </button>
+        <div style={{display:"flex",gap:8,alignItems:"center"}}>
+          {!order.cost_done && !order.completed && (
+            <button style={{...S.printBtn,background:"var(--good)",color:"#fff",fontSize:14,padding:"10px 20px"}} onClick={async()=>{
+              setSaving(true);
+              const patch={cost_done:true,invoice_usd_rate:+usdRate||null,invoice_sgd_rate:+sgdRate||null,sell_idr:Math.round(revenueIDR)};
+              await updateOrder(order.id,patch);
+              patchOrder&&patchOrder(order.id,patch);
+              setSaving(false);
+            }} disabled={saving}>
+              <Check size={14}/> {saving?"Saving…":"Mark Cost Done"}
+            </button>
+          )}
+          {order.cost_done && !order.completed && (
+            <span style={{fontSize:12,color:"var(--good)",fontWeight:700}}>✓ Cost done</span>
+          )}
+        </div>
       </div>
+      <CompleteAllButton order={order} ctx={ctx} onDone={onClose}/>
     </div>
   );
 }
