@@ -302,6 +302,8 @@ function Orders({ctx}){
             <div style={S.detailGrid}>
               <Detail label="Order date" value={o.order_date ? new Date(o.order_date).toLocaleDateString("en-GB") : "—"}/>
               <Detail label="Shipment" value={o.shipment_id+(consol?" (consolidated)":" (single)")}/>
+              <Detail label="Supplier / shipper" value={o.supplier_name||"—"}/>
+              {o.marking_code&&<Detail label="Marking code" value={<span style={{background:"var(--gold)",color:"var(--navy)",fontWeight:800,padding:"1px 8px",borderRadius:5,letterSpacing:".06em"}}>{o.marking_code}</span>} strong/>}
               <Detail label="Courier" value={`${courierOf(s?.courier_id)?.name??"—"} · ÷${qd.divisor}`}/>
               <Detail label="Actual weight" value={`${o.weight_kg} kg`}/>
               <Detail label="Volumetric" value={`${qd.vol.toFixed(1)} kg`}/>
@@ -347,8 +349,8 @@ function Shipments({ctx}){
     setBusy(null);
   }
 
-  // Only show shipments that have at least one order
-  const activeShipments=D.shipments.filter(s=>D.orders.some(o=>o.shipment_id===s.id));
+  // Only show shipments that have at least one non-completed order
+  const activeShipments=D.shipments.filter(s=>D.orders.some(o=>o.shipment_id===s.id&&!o.completed));
   const stageCounts=STAGES.map(st=>activeShipments.filter(s=>s.stage===st).length);
   const list=activeShipments
     .filter(s=>stageFilter===null||s.stage===stageFilter)
@@ -389,7 +391,7 @@ function Shipments({ctx}){
 
     <div style={{display:"flex",flexDirection:"column",gap:14}}>
       {list.map(s=>{
-        const orders=D.orders.filter(o=>o.shipment_id===s.id);
+        const orders=D.orders.filter(o=>o.shipment_id===s.id&&!o.completed);
         const stageIdx=STAGES.indexOf(s.stage);
         return(
           <div key={s.id} style={S.shipCard}>
@@ -454,23 +456,59 @@ function Shipments({ctx}){
               </div>
             </div>
 
-            {/* Per-order shipment done flags */}
+            {/* Per-order shipment done flags + full order info */}
             {orders.length>0&&(
-              <div style={{borderTop:"1px solid var(--line)",padding:"10px 0 4px",display:"flex",flexDirection:"column",gap:8}}>
+              <div style={{borderTop:"1px solid var(--line)",padding:"10px 0 4px",display:"flex",flexDirection:"column",gap:10}}>
                 <div style={{fontSize:11,fontWeight:700,color:"var(--ink-3)",letterSpacing:".04em",marginBottom:2}}>ORDER SHIPMENT STATUS</div>
-                {orders.filter(o=>!o.completed).map(o=>(
-                  <div key={o.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"6px 8px",background:"var(--head)",borderRadius:8}}>
-                    <div style={{display:"flex",alignItems:"center",gap:8}}>
-                      <span style={{fontFamily:"var(--mono)",fontSize:12,color:"var(--ink-3)"}}>{o.id}</span>
-                      <span style={{fontWeight:600,fontSize:13}}>{custName(o.customer_id)}</span>
-                      <TabStatusBar order={o}/>
+                {orders.map(o=>{
+                  const pkgs=o.packages||[];
+                  const nPkgs=pkgs.length||o.qty||1;
+                  const totalKg=pkgs.reduce((a,p)=>a+(+p.weight||0),0)||o.weight_kg||0;
+                  const totalCBM=pkgs.reduce((a,p)=>a+(+p.l||0)*(+p.w||0)*(+p.h||0)/1000000,0);
+                  return(
+                    <div key={o.id} style={{background:"var(--head)",borderRadius:10,padding:"10px 12px",display:"flex",flexDirection:"column",gap:6}}>
+                      {/* Row 1: ID + customer + status */}
+                      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
+                        <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                          <span style={{fontFamily:"var(--mono)",fontSize:12,color:"var(--ink-3)"}}>{o.id}</span>
+                          <span style={{fontWeight:700,fontSize:13}}>{custName(o.customer_id)}</span>
+                          <TabStatusBar order={o}/>
+                        </div>
+                        {o.shipment_done
+                          ? <span style={{fontSize:11,color:"var(--good)",fontWeight:700,flexShrink:0}}>✓ Delivered</span>
+                          : <span style={{fontSize:11,color:"var(--ink-3)",flexShrink:0}}>Awaiting delivery</span>
+                        }
+                      </div>
+                      {/* Row 2: Marking code (highlighted) + shipper + packages + weight/CBM */}
+                      <div style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
+                        {o.marking_code&&(
+                          <span style={{background:"var(--gold)",color:"var(--navy)",fontWeight:800,fontSize:13,padding:"2px 10px",borderRadius:6,letterSpacing:".06em"}}>
+                            {o.marking_code}
+                          </span>
+                        )}
+                        {o.supplier_name&&(
+                          <span style={{fontSize:12,color:"var(--ink-2)",display:"flex",alignItems:"center",gap:4}}>
+                            <Truck size={11} style={{opacity:.6}}/> {o.supplier_name}
+                          </span>
+                        )}
+                        <span style={{fontSize:12,color:"var(--ink-2)",display:"flex",alignItems:"center",gap:4}}>
+                          <Package size={11} style={{opacity:.6}}/> {nPkgs} pkg{nPkgs!==1?"s":""}
+                        </span>
+                        <span style={{fontSize:12,color:"var(--ink-2)"}}>
+                          {totalKg.toFixed(2)} kg
+                        </span>
+                        {totalCBM>0&&(
+                          <span style={{fontSize:12,color:"var(--ink-2)"}}>
+                            {totalCBM.toFixed(4)} m³
+                          </span>
+                        )}
+                        {o.product&&(
+                          <span style={{fontSize:12,color:"var(--ink-3)",fontStyle:"italic"}}>{o.product}</span>
+                        )}
+                      </div>
                     </div>
-                    {o.shipment_done
-                      ? <span style={{fontSize:11,color:"var(--good)",fontWeight:700}}>✓ Delivered</span>
-                      : <span style={{fontSize:11,color:"var(--ink-3)"}}>Awaiting delivery</span>
-                    }
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
