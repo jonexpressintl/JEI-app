@@ -1493,28 +1493,28 @@ function Completed({ctx}){
           <div key={o.id} style={{background:"var(--card)",border:"1px solid var(--line)",borderRadius:12,overflow:"hidden",transition:".15s"}}>
             {/* Summary row — click to expand */}
             <button onClick={()=>setOpenId(isOpen?null:o.id)}
-              style={{width:"100%",display:"flex",flexWrap:"wrap",gap:10,alignItems:"center",padding:"12px 16px",background:"transparent",border:"none",cursor:"pointer",fontFamily:"var(--body)",textAlign:"left"}}>
-              <span style={{fontFamily:"var(--mono)",fontSize:12,color:"var(--ink-3)",flex:"0 0 80px"}}>{o.id}</span>
-              <div style={{flex:2,minWidth:140}}>
+              style={{width:"100%",display:"grid",gridTemplateColumns:"90px 1fr 160px 110px 110px 130px 20px",gap:"0 16px",alignItems:"center",padding:"14px 16px",background:"transparent",border:"none",cursor:"pointer",fontFamily:"var(--body)",textAlign:"left"}}>
+              <span style={{fontFamily:"var(--mono)",fontSize:12,color:"var(--ink-3)"}}>{o.id}</span>
+              <div>
                 <div style={{fontWeight:700,fontSize:14,color:"var(--ink)"}}>{custName(o.customer_id)}</div>
                 <div style={{fontSize:12,color:"var(--ink-3)"}}>{o.product}</div>
               </div>
-              <div style={{flex:1,minWidth:90,textAlign:"left"}}>
-                <div style={{fontSize:11,color:"var(--ink-3)"}}>Shipment</div>
+              <div>
+                <div style={{fontSize:10,fontWeight:700,color:"var(--ink-3)",letterSpacing:".05em"}}>SHIPMENT</div>
                 <div style={{fontSize:12.5,fontWeight:600,color:"var(--ink)"}}>{o.shipment_id||"—"}{c?.name?` · ${c.name}`:""}</div>
               </div>
-              <div style={{flex:1,minWidth:80,textAlign:"left"}}>
-                <div style={{fontSize:11,color:"var(--ink-3)"}}>Order date</div>
+              <div>
+                <div style={{fontSize:10,fontWeight:700,color:"var(--ink-3)",letterSpacing:".05em"}}>ORDER DATE</div>
                 <div style={{fontSize:12.5,color:"var(--ink)"}}>{orderDate}</div>
               </div>
-              <div style={{flex:1,minWidth:80,textAlign:"left"}}>
-                <div style={{fontSize:11,color:"var(--ink-3)"}}>Completed</div>
+              <div>
+                <div style={{fontSize:10,fontWeight:700,color:"var(--ink-3)",letterSpacing:".05em"}}>COMPLETED</div>
                 <div style={{fontSize:12.5,fontWeight:600,color:"var(--good)"}}>{completedDate}</div>
               </div>
-              <div style={{flex:0,textAlign:"right"}}>
+              <div style={{textAlign:"right"}}>
                 <div style={{fontFamily:"var(--display)",fontSize:15,fontWeight:800,color:"var(--navy)"}}>{fmtIDR(totalIDR)}</div>
               </div>
-              <ChevronRight size={16} style={{color:"var(--ink-3)",transform:isOpen?"rotate(90deg)":"none",transition:".15s",flexShrink:0}}/>
+              <ChevronRight size={16} style={{color:"var(--ink-3)",transform:isOpen?"rotate(90deg)":"none",transition:".15s",justifySelf:"center"}}/>
             </button>
 
             {/* Expanded detail */}
