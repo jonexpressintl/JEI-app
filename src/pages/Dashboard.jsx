@@ -442,6 +442,35 @@ function Shipments({ctx}){
               </div>
             </div>
 
+            {/* Order info panel — sits where payment row used to be */}
+            {orders.map(o=>{
+              const pkgs=o.packages||[];
+              const nPkgs=pkgs.length||o.qty||1;
+              const totalKg=pkgs.reduce((a,p)=>a+(+p.weight||0),0)||o.weight_kg||0;
+              const totalCBM=pkgs.reduce((a,p)=>a+(+p.l||0)*(+p.w||0)*(+p.h||0)/1000000,0);
+              return(
+                <div key={"inf-"+o.id} style={{borderTop:"1px solid var(--line)",padding:"12px 0 4px"}}>
+                  <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:"8px 16px"}}>
+                    <div><span style={{fontSize:10,fontWeight:700,color:"var(--ink-3)",letterSpacing:".06em",display:"block",marginBottom:2}}>CUSTOMER</span>
+                      <span style={{fontWeight:700,fontSize:13}}>{custName(o.customer_id)}</span></div>
+                    <div><span style={{fontSize:10,fontWeight:700,color:"var(--ink-3)",letterSpacing:".06em",display:"block",marginBottom:2}}>MARKING CODE</span>
+                      {o.marking_code
+                        ? <span style={{background:"var(--gold)",color:"var(--navy)",fontWeight:800,fontSize:13,padding:"2px 10px",borderRadius:6,letterSpacing:".06em",display:"inline-block"}}>{o.marking_code}</span>
+                        : <span style={{fontSize:12,color:"var(--ink-3)"}}>—</span>}
+                    </div>
+                    <div><span style={{fontSize:10,fontWeight:700,color:"var(--ink-3)",letterSpacing:".06em",display:"block",marginBottom:2}}>SHIPPER</span>
+                      <span style={{fontSize:13}}>{o.supplier_name||"—"}</span></div>
+                    <div><span style={{fontSize:10,fontWeight:700,color:"var(--ink-3)",letterSpacing:".06em",display:"block",marginBottom:2}}>PACKAGES</span>
+                      <span style={{fontSize:13}}>{nPkgs} pkg{nPkgs!==1?"s":""}</span></div>
+                    <div><span style={{fontSize:10,fontWeight:700,color:"var(--ink-3)",letterSpacing:".06em",display:"block",marginBottom:2}}>WEIGHT</span>
+                      <span style={{fontSize:13}}>{totalKg.toFixed(2)} kg</span></div>
+                    <div><span style={{fontSize:10,fontWeight:700,color:"var(--ink-3)",letterSpacing:".06em",display:"block",marginBottom:2}}>VOLUME</span>
+                      <span style={{fontSize:13}}>{totalCBM>0?`${totalCBM.toFixed(4)} m³`:"—"}</span></div>
+                  </div>
+                </div>
+              );
+            })}
+
             {/* tracking numbers — hide legs beyond SG if destination is Singapore */}
             <div style={S.trackWrap}>
               <span style={{fontSize:12.5,color:"var(--ink-3)",display:"flex",alignItems:"center",gap:6,marginBottom:8}}><Truck size={14}/> Tracking</span>
@@ -456,59 +485,23 @@ function Shipments({ctx}){
               </div>
             </div>
 
-            {/* Per-order shipment done flags + full order info */}
+            {/* Per-order status bar — kept at bottom */}
             {orders.length>0&&(
-              <div style={{borderTop:"1px solid var(--line)",padding:"10px 0 4px",display:"flex",flexDirection:"column",gap:10}}>
+              <div style={{borderTop:"1px solid var(--line)",padding:"10px 0 4px",display:"flex",flexDirection:"column",gap:8}}>
                 <div style={{fontSize:11,fontWeight:700,color:"var(--ink-3)",letterSpacing:".04em",marginBottom:2}}>ORDER SHIPMENT STATUS</div>
-                {orders.map(o=>{
-                  const pkgs=o.packages||[];
-                  const nPkgs=pkgs.length||o.qty||1;
-                  const totalKg=pkgs.reduce((a,p)=>a+(+p.weight||0),0)||o.weight_kg||0;
-                  const totalCBM=pkgs.reduce((a,p)=>a+(+p.l||0)*(+p.w||0)*(+p.h||0)/1000000,0);
-                  return(
-                    <div key={o.id} style={{background:"var(--head)",borderRadius:10,padding:"10px 12px",display:"flex",flexDirection:"column",gap:6}}>
-                      {/* Row 1: ID + customer + status */}
-                      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
-                        <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-                          <span style={{fontFamily:"var(--mono)",fontSize:12,color:"var(--ink-3)"}}>{o.id}</span>
-                          <span style={{fontWeight:700,fontSize:13}}>{custName(o.customer_id)}</span>
-                          <TabStatusBar order={o}/>
-                        </div>
-                        {o.shipment_done
-                          ? <span style={{fontSize:11,color:"var(--good)",fontWeight:700,flexShrink:0}}>✓ Delivered</span>
-                          : <span style={{fontSize:11,color:"var(--ink-3)",flexShrink:0}}>Awaiting delivery</span>
-                        }
-                      </div>
-                      {/* Row 2: Marking code (highlighted) + shipper + packages + weight/CBM */}
-                      <div style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
-                        {o.marking_code&&(
-                          <span style={{background:"var(--gold)",color:"var(--navy)",fontWeight:800,fontSize:13,padding:"2px 10px",borderRadius:6,letterSpacing:".06em"}}>
-                            {o.marking_code}
-                          </span>
-                        )}
-                        {o.supplier_name&&(
-                          <span style={{fontSize:12,color:"var(--ink-2)",display:"flex",alignItems:"center",gap:4}}>
-                            <Truck size={11} style={{opacity:.6}}/> {o.supplier_name}
-                          </span>
-                        )}
-                        <span style={{fontSize:12,color:"var(--ink-2)",display:"flex",alignItems:"center",gap:4}}>
-                          <Package size={11} style={{opacity:.6}}/> {nPkgs} pkg{nPkgs!==1?"s":""}
-                        </span>
-                        <span style={{fontSize:12,color:"var(--ink-2)"}}>
-                          {totalKg.toFixed(2)} kg
-                        </span>
-                        {totalCBM>0&&(
-                          <span style={{fontSize:12,color:"var(--ink-2)"}}>
-                            {totalCBM.toFixed(4)} m³
-                          </span>
-                        )}
-                        {o.product&&(
-                          <span style={{fontSize:12,color:"var(--ink-3)",fontStyle:"italic"}}>{o.product}</span>
-                        )}
-                      </div>
+                {orders.map(o=>(
+                  <div key={o.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"6px 10px",background:"var(--head)",borderRadius:8}}>
+                    <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                      <span style={{fontFamily:"var(--mono)",fontSize:12,color:"var(--ink-3)"}}>{o.id}</span>
+                      <span style={{fontWeight:600,fontSize:13}}>{custName(o.customer_id)}</span>
+                      <TabStatusBar order={o}/>
                     </div>
-                  );
-                })}
+                    {o.shipment_done
+                      ? <span style={{fontSize:11,color:"var(--good)",fontWeight:700,flexShrink:0}}>✓ Delivered</span>
+                      : <span style={{fontSize:11,color:"var(--ink-3)",flexShrink:0}}>Awaiting delivery</span>
+                    }
+                  </div>
+                ))}
               </div>
             )}
           </div>
@@ -878,29 +871,31 @@ function Invoices({ctx}){
 
     {filtered.length===0 && <div style={S.empty}>No orders match the current filters.</div>}
     <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:14}}>
-      {filtered.map(o=>{const s=shipmentOf(o.shipment_id);return(
-        <button key={o.id} onClick={()=>setOpen(openId===o.id?null:o.id)}
-          style={{...S.shipCard,padding:"12px 16px",display:"flex",flexDirection:"column",justifyContent:"center",gap:6,cursor:"pointer",
-            border:openId===o.id?"2px solid var(--navy)":"1px solid var(--line)",
-            background:openId===o.id?"var(--head)":"var(--card)",opacity:o.invoice_done?.8:1}}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-            <div style={{display:"flex",alignItems:"center",gap:10}}>
-              <FileText size={15} style={{color:o.invoice_done?"var(--good)":"var(--navy)"}}/>
-              <span style={{fontFamily:"var(--mono)",fontWeight:700,fontSize:13}}>{o.id}</span>
-              <span style={{fontWeight:600}}>{custName(o.customer_id)}</span>
-              <span style={{fontSize:12.5,color:"var(--ink-3)"}}>{o.product}</span>
-              {o.invoice_done&&<span style={{fontSize:11,background:"var(--good-bg)",color:"var(--good)",borderRadius:5,padding:"1px 7px",fontWeight:700}}>✓ Done</span>}
+      {filtered.map(o=>{const s=shipmentOf(o.shipment_id); const isOpen=openId===o.id; return(
+        <div key={o.id} style={{borderRadius:12,border:isOpen?"2px solid var(--navy)":"1px solid var(--line)",overflow:"hidden"}}>
+          <button onClick={()=>setOpen(isOpen?null:o.id)}
+            style={{...S.shipCard,padding:"12px 16px",display:"flex",flexDirection:"column",justifyContent:"center",gap:6,cursor:"pointer",
+              width:"100%",background:isOpen?"var(--head)":"var(--card)",opacity:o.invoice_done?.8:1,border:"none",borderRadius:0}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div style={{display:"flex",alignItems:"center",gap:10}}>
+                <FileText size={15} style={{color:o.invoice_done?"var(--good)":"var(--navy)"}}/>
+                <span style={{fontFamily:"var(--mono)",fontWeight:700,fontSize:13}}>{o.id}</span>
+                <span style={{fontWeight:600}}>{custName(o.customer_id)}</span>
+                <span style={{fontSize:12.5,color:"var(--ink-3)"}}>{o.product}</span>
+                {o.invoice_done&&<span style={{fontSize:11,background:"var(--good-bg)",color:"var(--good)",borderRadius:5,padding:"1px 7px",fontWeight:700}}>✓ Done</span>}
+              </div>
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <span className={"paybadge pay-"+(s?.payment??"Unpaid")}>{s?.payment??"Unpaid"}</span>
+                <span style={{fontFamily:"var(--display)",fontWeight:700,fontSize:14}}>{fmtIDR(Number(o.sell_idr||0))}</span>
+                <ChevronRight size={14} style={{color:"var(--ink-3)",transform:isOpen?"rotate(90deg)":"none",transition:".15s",flexShrink:0}}/>
+              </div>
             </div>
-            <div style={{display:"flex",alignItems:"center",gap:8}}>
-              <span className={"paybadge pay-"+(s?.payment??"Unpaid")}>{s?.payment??"Unpaid"}</span>
-              <span style={{fontFamily:"var(--display)",fontWeight:700,fontSize:14}}>{fmtIDR(Number(o.sell_idr||0))}</span>
-            </div>
-          </div>
-          <TabStatusBar order={o}/>
-        </button>
+            <TabStatusBar order={o}/>
+          </button>
+          {isOpen && <div style={{borderTop:"2px solid var(--navy)"}}><InvoiceDoc ctx={ctx} order={o} onClose={()=>setOpen(null)} reload={reload}/></div>}
+        </div>
       );})}
     </div>
-    {openId && <InvoiceDoc ctx={ctx} order={filtered.find(o=>o.id===openId)} onClose={()=>setOpen(null)} reload={reload}/>}
   </>);
 }
 
@@ -1183,31 +1178,33 @@ function Costs({ctx}){
     <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:14}}>
       {filtered.map(o=>{
         const s=shipmentOf(o.shipment_id);
+        const isOpen=openId===o.id;
         return(
-          <button key={o.id} onClick={()=>setOpenId(openId===o.id?null:o.id)}
-            style={{...S.shipCard,padding:"12px 16px",display:"flex",flexDirection:"column",justifyContent:"center",gap:6,cursor:"pointer",
-              border:openId===o.id?"2px solid var(--navy)":"1px solid var(--line)",
-              background:openId===o.id?"var(--head)":"var(--card)",opacity:o.cost_done?.8:1}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-              <div style={{display:"flex",alignItems:"center",gap:10}}>
-                <CreditCard size={15} style={{color:o.cost_done?"var(--good)":"var(--navy)"}}/>
-                <span style={{fontFamily:"var(--mono)",fontWeight:700,fontSize:13}}>{o.id}</span>
-                <span style={{fontWeight:600}}>{custName(o.customer_id)}</span>
-                <span style={{fontSize:12.5,color:"var(--ink-3)"}}>{o.product}</span>
-                {o.cost_done&&<span style={{fontSize:11,background:"var(--good-bg)",color:"var(--good)",borderRadius:5,padding:"1px 7px",fontWeight:700}}>✓ Done</span>}
+          <div key={o.id} style={{borderRadius:12,border:isOpen?"2px solid var(--navy)":"1px solid var(--line)",overflow:"hidden"}}>
+            <button onClick={()=>setOpenId(isOpen?null:o.id)}
+              style={{...S.shipCard,padding:"12px 16px",display:"flex",flexDirection:"column",justifyContent:"center",gap:6,cursor:"pointer",
+                width:"100%",background:isOpen?"var(--head)":"var(--card)",opacity:o.cost_done?.8:1,border:"none",borderRadius:0}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <div style={{display:"flex",alignItems:"center",gap:10}}>
+                  <CreditCard size={15} style={{color:o.cost_done?"var(--good)":"var(--navy)"}}/>
+                  <span style={{fontFamily:"var(--mono)",fontWeight:700,fontSize:13}}>{o.id}</span>
+                  <span style={{fontWeight:600}}>{custName(o.customer_id)}</span>
+                  <span style={{fontSize:12.5,color:"var(--ink-3)"}}>{o.product}</span>
+                  {o.cost_done&&<span style={{fontSize:11,background:"var(--good-bg)",color:"var(--good)",borderRadius:5,padding:"1px 7px",fontWeight:700}}>✓ Done</span>}
+                </div>
+                <div style={{display:"flex",alignItems:"center",gap:8}}>
+                  <span className={"paybadge pay-"+(s?.payment??"Unpaid")}>{s?.payment??"Unpaid"}</span>
+                  <span style={{fontFamily:"var(--display)",fontWeight:700,fontSize:14,color:"var(--navy)"}}>{fmtIDR(Number(o.sell_idr||0))}</span>
+                  <ChevronRight size={14} style={{color:"var(--ink-3)",transform:isOpen?"rotate(90deg)":"none",transition:".15s",flexShrink:0}}/>
+                </div>
               </div>
-              <div style={{display:"flex",alignItems:"center",gap:8}}>
-                <span className={"paybadge pay-"+(s?.payment??"Unpaid")}>{s?.payment??"Unpaid"}</span>
-                <span style={{fontFamily:"var(--display)",fontWeight:700,fontSize:14,color:"var(--navy)"}}>{fmtIDR(Number(o.sell_idr||0))}</span>
-                <ChevronRight size={14} style={{color:"var(--ink-3)",transform:openId===o.id?"rotate(90deg)":"none",transition:".15s"}}/>
-              </div>
-            </div>
-            <TabStatusBar order={o}/>
-          </button>
+              <TabStatusBar order={o}/>
+            </button>
+            {isOpen && <div style={{borderTop:"2px solid var(--navy)"}}><CostDoc ctx={ctx} order={o} reload={reload} onClose={()=>setOpenId(null)}/></div>}
+          </div>
         );
       })}
-    </div>
-    {openId && <CostDoc ctx={ctx} order={filtered.find(o=>o.id===openId)} reload={reload} onClose={()=>setOpenId(null)}/>}
+    </div>}
   </>);
 }
 
