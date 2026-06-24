@@ -129,7 +129,7 @@ export default function Dashboard() {
     return shipCostIDR(o.shipment_id) * (Number(o.sell_idr)/tot);
   };
 
-  const ctx = { D, isOwner, custName, custRate, courierOf, shipmentOf, costsFor, quote, orderCostIDR, shipCostIDR, reload: D.reload, patchOrder: D.patchOrder, patchCustomer: D.patchCustomer, liveFx, refreshFx };
+  const ctx = { D, isOwner, custName, custRate, courierOf, shipmentOf, costsFor, quote, orderCostIDR, shipCostIDR, reload: D.reload, patchOrder: D.patchOrder, patchCustomer: D.patchCustomer, patchShipment: D.patchShipment, liveFx, refreshFx };
   const TABS = [
     {k:"orders",label:"Orders",icon:LayoutGrid},
     {k:"shipments",label:"Shipments",icon:Boxes},
@@ -252,7 +252,7 @@ function Orders({ctx}){
   const [formOpen,setFormOpen]=useState(false);
   const [editOrder,setEditOrder]=useState(null);
   const list=useMemo(()=>D.orders.filter(o=>!o.completed).filter(o=>[o.id,custName(o.customer_id),o.product,o.shipment_id].join(" ").toLowerCase().includes(q.toLowerCase())),[q,D.orders]);
-  const t=useMemo(()=>{const active=D.orders.filter(o=>!o.completed);const rev=active.reduce((a,o)=>a+Number(o.sell_idr),0);const cost=active.reduce((a,o)=>a+orderCostIDR(o),0);const del=active.filter(o=>shipmentOf(o.shipment_id)?.stage==="Delivered to customer").length;return{rev,cost,profit:rev-cost,del,fly:active.length-del};},[D.orders]);
+  const t=useMemo(()=>{const active=D.orders.filter(o=>!o.completed);const rev=active.reduce((a,o)=>a+Number(o.sell_idr),0);const cost=active.reduce((a,o)=>a+orderCostIDR(o),0);const del=active.filter(o=>shipmentOf(o.shipment_id)?.stage==="Delivered to customer").length;return{active:active.length,rev,cost,profit:rev-cost,del,fly:active.length-del};},[D.orders]);
 
   const openNew=()=>{setEditOrder(null);setFormOpen(true);};
   const openEdit=(o)=>{setEditOrder(o);setFormOpen(true);};
@@ -260,7 +260,7 @@ function Orders({ctx}){
 
   return(<>
     <section style={S.kpis}>
-      <Kpi label="Active orders" value={D.orders.length} sub={`${t.fly} in flight · ${t.del} delivered`}/>
+      <Kpi label="Active orders" value={t.active} sub={`${t.fly} in flight · ${t.del} delivered`}/>
       {isOwner?<>
         <Kpi label="Revenue (booked)" value={fmtShort(t.rev)} sub="all open orders" accent/>
         <Kpi label="Landed cost" value={fmtShort(t.cost)} sub="freight+handling+delivery"/>
@@ -320,7 +320,7 @@ function Orders({ctx}){
 
 // ──────────── SHIPMENTS (checkpoint tracking) ────────────
 function Shipments({ctx}){
-  const {D,custName,courierOf,reload,patchOrder}=ctx;
+  const {D,custName,courierOf,reload,patchOrder,patchShipment}=ctx;
   const [busy,setBusy]=useState(null);
   const [q,setQ]=useState("");
   const [stageFilter,setStageFilter]=useState(null); // null = all stages
@@ -328,6 +328,7 @@ function Shipments({ctx}){
   async function advance(sid,stage){
     setBusy(sid+stage);
     await setShipmentStage(sid,stage);
+    patchShipment&&patchShipment(sid,{stage,stage_updated_at:new Date().toISOString()});
     // Auto-sync shipment_done on all orders in this shipment based on stage
     const isDelivered = stage==="Delivered to customer";
     const ordersInShipment = D.orders.filter(o=>o.shipment_id===sid&&!o.completed);
@@ -337,10 +338,14 @@ function Shipments({ctx}){
         patchOrder&&patchOrder(o.id,{shipment_done:isDelivered});
       }
     }));
-    await reload();
     setBusy(null);
   }
-  async function setPay(sid,payment){setBusy(sid+payment);await setShipmentPayment(sid,payment);await reload();setBusy(null);}
+  async function setPay(sid,payment){
+    setBusy(sid+payment);
+    await setShipmentPayment(sid,payment);
+    patchShipment&&patchShipment(sid,{payment,payment_updated_at:new Date().toISOString()});
+    setBusy(null);
+  }
 
   // Only show shipments that have at least one order
   const activeShipments=D.shipments.filter(s=>D.orders.some(o=>o.shipment_id===s.id));

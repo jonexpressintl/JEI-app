@@ -58,7 +58,15 @@ export function useJEIData() {
     }));
   }, []);
 
-  return { ...data, loading, error, reload: load, patchOrder, patchCustomer };
+  // Locally patch one shipment's fields without refetching.
+  const patchShipment = useCallback((shipmentId, patch) => {
+    setData(d => ({
+      ...d,
+      shipments: d.shipments.map(s => s.id === shipmentId ? { ...s, ...patch } : s),
+    }));
+  }, []);
+
+  return { ...data, loading, error, reload: load, patchOrder, patchCustomer, patchShipment };
 }
 
 // ── Customers ──
