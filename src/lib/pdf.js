@@ -128,13 +128,14 @@ export function generateInvoicePDF(order, customer, shipment, courier, liveFx) {
     if (+order.fee_additional) feeLines.push({ label: "Additional cost", amount: +order.fee_additional, currency: order.fee_additional_cur || "USD" });
   } else if (feeMode === "air_sea") {
     const airKgP = getKgPdf(order.air_weight_basis || "charged");
+    const seaKgP = getKgPdf(order.sea_weight_basis || "charged");
     const airTotalP = (+order.fee_1||0) * airKgP;
-    const seaCBMTotalP = (+order.fee_2||0) * cbmB; // sea leg is CBM-based, not kg-based
+    const seaTotalP = (+order.fee_2||0) * seaKgP;
     const cur1 = order.fee_1_cur||"USD"; const cur2 = order.fee_2_cur||"IDR";
     const sym1 = cur1==="USD"?"$":cur1==="SGD"?"S$":"Rp"; const sym2 = cur2==="USD"?"$":cur2==="SGD"?"S$":"Rp";
     if (+order.fee_1) feeLines.push({ label: `Airfreight (${airKgP.toFixed(1)} kg × ${sym1}${(+order.fee_1).toLocaleString()}, ${order.air_weight_basis||"charged"})`, amount: airTotalP, currency: cur1 });
     if (+order.fee_clearance) feeLines.push({ label: "Clearance fee", amount: +order.fee_clearance, currency: order.fee_clearance_cur || "SGD" });
-    if (+order.fee_2) feeLines.push({ label: `Seafreight SIN→JKT (${cbmB.toFixed(4)} m³ × ${sym2}${(+order.fee_2).toLocaleString()}/CBM)`, amount: seaCBMTotalP, currency: cur2 });
+    if (+order.fee_2) feeLines.push({ label: `Seafreight (${seaKgP.toFixed(1)} kg × ${sym2}${(+order.fee_2).toLocaleString()}, ${order.sea_weight_basis||"charged"})`, amount: seaTotalP, currency: cur2 });
     if (+order.fee_additional) feeLines.push({ label: "Additional cost", amount: +order.fee_additional, currency: order.fee_additional_cur || "USD" });
   } else {
     if (+order.fee_1) feeLines.push({ label: `Seafreight USA->SIN (${cbmA.toFixed(2)} CBM)`, amount: sf1Total, currency: order.fee_1_cur || "USD" });
@@ -142,12 +143,7 @@ export function generateInvoicePDF(order, customer, shipment, courier, liveFx) {
     if (+order.fee_2) feeLines.push({ label: `Seafreight SIN->JKT (${cbmB.toFixed(2)} CBM)`, amount: sf2Total, currency: order.fee_2_cur || "IDR" });
     if (+order.fee_additional) feeLines.push({ label: "Additional cost", amount: +order.fee_additional, currency: order.fee_additional_cur || "USD" });
   }
-  (order.extra_costs||[]).forEach(ec => {
-    const qty = +ec.qty || 1;
-    const total = (+ec.amount||0) * qty;
-    const label = qty > 1 ? `${ec.label} ×${qty}` : ec.label;
-    feeLines.push({ label, amount: total, currency: ec.currency || "IDR" });
-  });
+  (order.extra_costs||[]).forEach(ec => feeLines.push({ label: ec.label, amount: +ec.amount, currency: ec.currency || "IDR" }));
   (order.order_extra_fees||[]).forEach(ef => {
     const qty = +ef.qty || 1;
     const total = (+ef.amount||0) * qty;

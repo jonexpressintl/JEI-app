@@ -19,7 +19,7 @@ const FIELDS = [
 const empty = () => ({ name: "", states: "", shipping_mark: "", contact_person: "", contact_number: "", address: "", rate_per_kg: 0, rate_currency: "IDR", notes: "" });
 
 export default function CustomerData({ ctx }) {
-  const { D, reload, patchCustomer } = ctx;
+  const { D, reload } = ctx;
   const [q, setQ] = useState("");
   const [editId, setEditId] = useState(null);
   const [editData, setEditData] = useState({});
@@ -69,8 +69,8 @@ export default function CustomerData({ ctx }) {
     const patch = { ...editData };
     if (patch.rate_per_kg !== undefined) patch.rate_per_kg = +patch.rate_per_kg;
     await updateCustomer(editId, patch);
-    patchCustomer && patchCustomer(editId, patch);
     setEditId(null);
+    await reload();
     setBusy(false);
   }
 
