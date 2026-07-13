@@ -3,65 +3,59 @@ import autoTable from "jspdf-autotable";
 import { chargeable, finalizeCharged, fmtIDR } from "./pricing";
 import { LOGO } from "./logo";
 
-const INK  = [33, 33, 33];
+const INK = [33, 33, 33];
 const GRAY = [120, 120, 120];
 const ACCENT = [0, 128, 128];
-const LN   = [200, 200, 200];
-const BG   = [245, 245, 245];
-const M    = { left: 15, right: 15 };
-const PAGE_H = 297; // A4 mm
+const LN = [200, 200, 200];
+const BG = [245, 245, 245];
+const M = { left: 15, right: 15 };
+const PW = 180;
+const PAGE_H = 297; // A4 height in mm
+const FOOTER_H = 60; // approx space needed for bank details block
 
 const COMPANY = {
   name: "JON EXPRESS INTERNATIONAL LLC",
-  pic:  "PIC: Merry Toh",
+  pic: "PIC: Merry Toh",
   addr: ["17826 19th Ave W", "Lynnwood, Washington", "98037, USA"],
   phone: "425-240-3607",
   email: "jonexpressintl@gmail.com",
   banks: [
-    { title: "Indonesian Account",  lines: ["BCA", "Account name: Merry", "Account number: 5830208790"] },
-    { title: "BCA Dollar Account",  lines: ["Account name: Merry", "Account number: 5830503333"] },
-    { title: "USA Account:", lines: [
-        "Jon Express International LLC",
-        "JPMorgan Chase Bank, N.A",
-        "Account number: 680321962",
-        "Routing Number: 325070760",
-        "Venmo: merrytoh16; Chase: jonexpressintl@gmail.com",
-      ],
-    },
+    { title: "Indonesian Account", lines: ["BCA", "Account name: Merry", "Account number: 5830208790"] },
+    { title: "BCA Dollar Account", lines: ["Account name: Merry", "Account number: 5830503333"] },
+    { title: "USA Account:", lines: ["Jon Express International LLC", "JPMorgan Chase Bank, N.A", "Account number: 680321962", "Routing Number: 325070760", "Venmo: merrytoh16; Chase: jonexpressintl@gmail.com"] },
   ],
 };
 
-function fmtUSD(n) { return "$"  + Number(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
-function fmtRp(n)  { return "Rp " + Number(Math.round(n)).toLocaleString("id-ID"); }
+function fmtUSD(n) { return "$" + Number(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+function fmtRp(n) { return "Rp " + Number(Math.round(n)).toLocaleString("id-ID"); }
 function fmtAmt(n, cur) { return cur === "USD" ? fmtUSD(n) : fmtRp(n); }
 
 function fmtDate(d) {
   if (!d) return "—";
   const dt = new Date(d);
   if (isNaN(dt.getTime())) return String(d);
-  return `${String(dt.getDate()).padStart(2,"0")}/${String(dt.getMonth()+1).padStart(2,"0")}/${dt.getFullYear()}`;
+  const dd = String(dt.getDate()).padStart(2, "0");
+  const mm = String(dt.getMonth() + 1).padStart(2, "0");
+  return `${dd}/${mm}/${dt.getFullYear()}`;
 }
 
 function companyBlock(doc, startY) {
   let y = startY;
   try { doc.addImage(LOGO, "JPEG", M.left, y - 4, 28, 28); } catch (e) {}
-  const tx = M.left + 33;
+  const textX = M.left + 33;
   doc.setFontSize(9); doc.setFont("helvetica", "bold"); doc.setTextColor(...INK);
-  doc.text(COMPANY.name, tx, y); y += 6;
+  doc.text(COMPANY.name, textX, y); y += 6;
   doc.setFontSize(8); doc.setFont("helvetica", "normal");
-  doc.text(COMPANY.pic, tx, y); y += 4;
-  COMPANY.addr.forEach(l => { doc.text(l, tx, y); y += 4; });
-  doc.text(COMPANY.phone, tx, y); y += 4;
-  doc.setTextColor(0, 0, 180); doc.text(COMPANY.email, tx, y);
+  doc.text(COMPANY.pic, textX, y); y += 4;
+  COMPANY.addr.forEach(l => { doc.text(l, textX, y); y += 4; });
+  doc.text(COMPANY.phone, textX, y); y += 4;
+  doc.setTextColor(0, 0, 180); doc.text(COMPANY.email, textX, y);
   doc.setTextColor(...INK);
-  return Math.max(y + 6, startY + 28 + 4);
+  return Math.max(y + 6, M.left + 28 + 4);
 }
 
-/**
- * If currentY + needed would overflow the page, add a new page and
- * return a fresh starting Y of 20. Otherwise return currentY unchanged.
- */
-function ensureRoom(doc, currentY, needed) {
+// Ensure there is enough room for `needed` mm; if not, add a new page and return the new Y.
+function ensureSpace(doc, currentY, needed) {
   if (currentY + needed > PAGE_H - 10) {
     doc.addPage();
     return 20;
@@ -69,34 +63,27 @@ function ensureRoom(doc, currentY, needed) {
   return currentY;
 }
 
-/**
- * Draw the payment / bank-details block starting at startY.
- * Adds new pages automatically whenever a section won't fit.
- */
-function drawBankBlock(doc, startY) {
-  let py = startY;
+// Draw the payment / bank details block. Starts at py, returns final y.
+function drawBankDetails(doc, py) {
+  py = ensureSpace(doc, py, FOOTER_H);
   doc.setFontSize(9); doc.setFont("helvetica", "bold"); doc.setTextColor(...ACCENT);
-  doc.text("Please remit payment to account:", M.left, py);
-  py += 7;
-
+  doc.text("Please remit payment to account:", M.left, py); py += 7;
   COMPANY.banks.forEach(bank => {
-    // Each bank block needs title + lines; estimate height and page-break if needed
-    const blockH = 4.5 + bank.lines.length * 4 + 4;
-    py = ensureRoom(doc, py, blockH);
-
+    py = ensureSpace(doc, py, 20);
     doc.setFont("helvetica", "bold"); doc.setTextColor(...INK);
     doc.text(bank.title, M.left, py); py += 4.5;
     doc.setFont("helvetica", "normal");
     bank.lines.forEach(l => {
-      py = ensureRoom(doc, py, 5);
+      py = ensureSpace(doc, py, 6);
       doc.text(l, M.left, py); py += 4;
     });
     py += 3;
   });
-
-  py = ensureRoom(doc, py + 4, 12);
+  py += 4;
+  py = ensureSpace(doc, py, 10);
   doc.setFontSize(11); doc.setFont("helvetica", "bold"); doc.setTextColor(...ACCENT);
   doc.text("Thank You for Your Business!", 105, py, { align: "center" });
+  return py;
 }
 
 // ═══════════════════════ INVOICE ═══════════════════════
@@ -116,21 +103,22 @@ export function generateInvoicePDF(order, customer, shipment, courier, liveFx) {
     ? doc.splitTextToSize(customer.address, bw - 34)
     : ["—"];
   const rowH = 8;
-  const bh  = rowH * 3 + Math.max(addrLines.length, 1) * 4 + 4;
+  const bh = rowH * 3 + Math.max(addrLines.length, 1) * 4 + 4;
 
   doc.setDrawColor(...LN); doc.setLineWidth(0.3);
   doc.rect(bx, by, bw, bh);
-  doc.line(bx, by + rowH,     bx + bw, by + rowH);
+  doc.line(bx, by + rowH, bx + bw, by + rowH);
   doc.line(bx, by + rowH * 2, bx + bw, by + rowH * 2);
   doc.line(bx, by + rowH * 3, bx + bw, by + rowH * 3);
   doc.line(bx + 30, by, bx + 30, by + bh);
 
   const invNo = "INV-JEI/" + String(order.id).replace("ORD-", "");
   doc.setFontSize(7.5); doc.setFont("helvetica", "normal"); doc.setTextColor(...GRAY);
-  doc.text("Invoice No.",  bx + 2, by + 5.5);
+  doc.text("Invoice No.", bx + 2, by + 5.5);
   doc.text("Invoice Date", bx + 2, by + rowH + 5.5);
-  doc.text("Bill To",      bx + 2, by + rowH * 2 + 5.5);
-  doc.text("Ship to",      bx + 2, by + rowH * 3 + 5);
+  doc.text("Bill To", bx + 2, by + rowH * 2 + 5.5);
+  doc.text("Ship to", bx + 2, by + rowH * 3 + 5);
+
   doc.setFont("helvetica", "bold"); doc.setTextColor(...INK); doc.setFontSize(8.5);
   doc.text(invNo, bx + 32, by + 5.5);
   doc.setFont("helvetica", "normal"); doc.setFontSize(8);
@@ -141,110 +129,92 @@ export function generateInvoicePDF(order, customer, shipment, courier, liveFx) {
   addrLines.forEach((l, i) => doc.text(l, bx + 32, by + rowH * 3 + 5 + i * 3.8));
   doc.setTextColor(...INK);
 
-  // ── Build fee lines (same logic as Dashboard quote()) ──────────────────────
+  // Build fee lines — same logic as Dashboard quote()
   const isAirM = (m) => m && m !== "Seafreight";
-  const div  = +order.divisor || 5000;
+  const div = +order.divisor || 5000;
   const pkgs = order.packages?.length > 0
     ? order.packages
     : [{ weight: +order.weight_kg, l: +order.dim_l_cm, w: +order.dim_w_cm, h: +order.dim_h_cm }];
-
   let totalRaw = 0, totalActual = 0, totalVol = 0;
   pkgs.forEach(p => {
     const ch = chargeable({ l: +p.l, w: +p.w, h: +p.h }, +p.weight, div);
     totalRaw += ch.raw; totalActual += +p.weight; totalVol += ch.vol;
   });
   const chargedAuto = finalizeCharged(totalRaw).charged;
-  const charged     = +order.charged_override || chargedAuto;
-  const rate        = +order.price_per_kg || customer?.rate_per_kg || 0;
-
+  const charged = +order.charged_override || chargedAuto;
+  const rate = +order.price_per_kg || 0;
   const feeMode = isAirM(order.shipping_us_sg) && isAirM(order.shipping_sg_id) ? "air_air"
     : isAirM(order.shipping_us_sg) && !isAirM(order.shipping_sg_id) ? "air_sea" : "sea_sea";
-
   const autoCBM = pkgs.reduce((a, p) => a + ((+p.l) * (+p.w) * (+p.h)) / 1_000_000, 0);
   const cbmA = +order.cbm_us_sg || autoCBM;
   const cbmB = +order.cbm_sg_id || autoCBM;
-
   const getKg = (basis) => {
-    if (basis === "actual")     return finalizeCharged(totalActual).charged;
+    if (basis === "actual") return finalizeCharged(totalActual).charged;
     if (basis === "volumetric") return finalizeCharged(totalVol).charged;
     return charged;
   };
-  const sym = (cur) => cur === "USD" ? "$" : cur === "SGD" ? "S$" : "Rp";
 
   const feeLines = [];
-  const weightPrice = charged * rate;
-
   if (feeMode === "air_air" || (feeMode === "air_sea" && order.air_sea_option !== "breakdown")) {
-    if (rate || weightPrice)
-      feeLines.push({ label: `Shipment ${shipment?.id || "—"} (${order.shipping_us_sg || "Air"} / ${order.shipping_sg_id || "Air"}, ${pkgs.length} pkg, ${charged.toFixed(1)} kg)`, amount: weightPrice, currency: order.price_currency || "USD" });
-    if (+order.fee_additional)
-      feeLines.push({ label: "Additional cost", amount: +order.fee_additional, currency: order.fee_additional_cur || "USD" });
-
+    const wp = charged * rate;
+    if (rate || wp) feeLines.push({ label: `Shipment (${order.shipping_us_sg || "Air"}/${order.shipping_sg_id || "Air"}, ${charged.toFixed(1)}kg)`, amount: wp, currency: order.price_currency || "USD" });
+    if (+order.fee_additional) feeLines.push({ label: "Additional cost", amount: +order.fee_additional, currency: order.fee_additional_cur || "USD" });
   } else if (feeMode === "air_sea") {
-    const airKg = getKg(order.air_weight_basis || "charged");
-    const cur1 = order.fee_1_cur || "USD";
-    const cur2 = order.fee_2_cur || "IDR";
-    if (+order.fee_1)
-      feeLines.push({ label: `Airfreight (${airKg.toFixed(1)} kg × ${sym(cur1)}${(+order.fee_1).toLocaleString()}, ${order.air_weight_basis || "charged"})`, amount: (+order.fee_1) * airKg, currency: cur1 });
-    if (+order.fee_clearance)
-      feeLines.push({ label: "Clearance fee", amount: +order.fee_clearance, currency: order.fee_clearance_cur || "SGD" });
-    if (+order.fee_2)
-      feeLines.push({ label: `Seafreight SIN→JKT (${cbmB.toFixed(4)} m³ × ${sym(cur2)}${(+order.fee_2).toLocaleString()}/CBM)`, amount: (+order.fee_2) * cbmB, currency: cur2 });
-    if (+order.fee_additional)
-      feeLines.push({ label: "Additional cost", amount: +order.fee_additional, currency: order.fee_additional_cur || "USD" });
-
-  } else { // sea_sea
-    const cur1 = order.fee_1_cur || "USD";
-    const cur2 = order.fee_2_cur || "IDR";
-    if (+order.fee_1)
-      feeLines.push({ label: `Seafreight USA→SIN (${cbmA.toFixed(2)} CBM × ${sym(cur1)}${(+order.fee_1).toLocaleString()})`, amount: (+order.fee_1) * cbmA, currency: cur1 });
-    if (+order.fee_clearance)
-      feeLines.push({ label: "Clearance fee", amount: +order.fee_clearance, currency: order.fee_clearance_cur || "SGD" });
-    if (+order.fee_2)
-      feeLines.push({ label: `Seafreight SIN→JKT (${cbmB.toFixed(2)} CBM × ${sym(cur2)}${(+order.fee_2).toLocaleString()})`, amount: (+order.fee_2) * cbmB, currency: cur2 });
-    if (+order.fee_additional)
-      feeLines.push({ label: "Additional cost", amount: +order.fee_additional, currency: order.fee_additional_cur || "USD" });
+    const aKg = getKg(order.air_weight_basis || "charged");
+    const sKg = getKg(order.sea_weight_basis || "charged");
+    const c1 = order.fee_1_cur || "USD", c2 = order.fee_2_cur || "IDR";
+    if (+order.fee_1) feeLines.push({ label: `Airfreight (${aKg.toFixed(1)}kg)`, amount: (+order.fee_1) * aKg, currency: c1 });
+    if (+order.fee_clearance) feeLines.push({ label: "Clearance fee", amount: +order.fee_clearance, currency: order.fee_clearance_cur || "SGD" });
+    if (+order.fee_2) feeLines.push({ label: `Seafreight (${sKg.toFixed(1)}kg)`, amount: (+order.fee_2) * sKg, currency: c2 });
+    if (+order.fee_additional) feeLines.push({ label: "Additional cost", amount: +order.fee_additional, currency: order.fee_additional_cur || "USD" });
+  } else {
+    if (+order.fee_1) feeLines.push({ label: `Seafreight USA→SG (${cbmA.toFixed(2)} CBM)`, amount: (+order.fee_1) * cbmA, currency: order.fee_1_cur || "USD" });
+    if (+order.fee_clearance) feeLines.push({ label: "Clearance fee", amount: +order.fee_clearance, currency: order.fee_clearance_cur || "SGD" });
+    if (+order.fee_2) feeLines.push({ label: `Seafreight SG→ID (${cbmB.toFixed(2)} CBM)`, amount: (+order.fee_2) * cbmB, currency: order.fee_2_cur || "IDR" });
+    if (+order.fee_additional) feeLines.push({ label: "Additional cost", amount: +order.fee_additional, currency: order.fee_additional_cur || "USD" });
   }
 
-  // Append invoice-level extra costs (extra_costs)
+  // Append invoice-tab extra costs (extra_costs)
   (order.extra_costs || []).forEach(ec => {
-    const qty   = +ec.qty || 1;
+    const qty = +ec.qty || 1;
     const total = (+ec.amount || 0) * qty;
-    feeLines.push({ label: qty > 1 ? `${ec.label} ×${qty}` : ec.label, amount: total, currency: ec.currency || "IDR" });
+    const label = qty > 1 ? `${ec.label} ×${qty}` : ec.label;
+    feeLines.push({ label, amount: total, currency: ec.currency || "IDR" });
   });
 
   // Append order-tab extra fees (order_extra_fees)
   (order.order_extra_fees || []).forEach(ef => {
-    const qty   = +ef.qty || 1;
+    const qty = +ef.qty || 1;
     const total = (+ef.amount || 0) * qty;
-    if (ef.label || total)
-      feeLines.push({ label: qty > 1 ? `${ef.label || "Additional cost"} ×${qty}` : (ef.label || "Additional cost"), amount: total, currency: ef.currency || "USD" });
+    if (ef.label || total) feeLines.push({
+      label: qty > 1 ? `${ef.label || "Additional cost"} ×${qty}` : (ef.label || "Additional cost"),
+      amount: total, currency: ef.currency || "USD"
+    });
   });
 
-  const fx    = liveFx || { usd_idr: 15850, sgd_idr: 11900 };
+  const fx = liveFx || { usd_idr: 15850, sgd_idr: 11900 };
   const toIDR = (amt, c) => c === "USD" ? (+amt || 0) * fx.usd_idr : c === "SGD" ? (+amt || 0) * fx.sgd_idr : (+amt || 0);
 
-  // ── Fee lines table ─────────────────────────────────────────────────────────
-  // autoTable handles page breaks automatically; each row is kept together.
+  // Fee lines table — autoTable handles page breaks automatically
   const t1 = autoTable(doc, {
     startY: Math.max(cy, by + bh) + 6,
     head: [["Description", "Amount", "In IDR"]],
     body: feeLines.length > 0
       ? feeLines.map(l => [l.label, fmtAmt(l.amount, l.currency), fmtRp(toIDR(l.amount, l.currency))])
       : [["No fee lines recorded", "", ""]],
-    styles:      { fontSize: 8.5, cellPadding: 5, textColor: INK, lineColor: LN, lineWidth: 0.3 },
-    headStyles:  { fillColor: BG, textColor: INK, fontStyle: "bold" },
-    columnStyles:{ 0: { cellWidth: 100 }, 1: { halign: "right", cellWidth: 40 }, 2: { halign: "right", cellWidth: 40 } },
+    styles: { fontSize: 8.5, cellPadding: 5, textColor: INK, lineColor: LN, lineWidth: 0.3 },
+    headStyles: { fillColor: BG, textColor: INK, fontStyle: "bold" },
+    columnStyles: { 0: { cellWidth: 100 }, 1: { halign: "right", cellWidth: 40 }, 2: { halign: "right", cellWidth: 40 } },
     theme: "grid",
     margin: M,
-    // Never split a single row across two pages
+    // Keep rows from being split across pages
     rowPageBreak: "avoid",
   });
 
-  // ── Totals table ────────────────────────────────────────────────────────────
+  // Totals table
   const totalIDR = feeLines.reduce((a, l) => a + toIDR(l.amount, l.currency), 0);
-  const usesUSD  = feeLines.some(l => l.currency === "USD");
-  const usesSGD  = feeLines.some(l => l.currency === "SGD");
+  const usesUSD = feeLines.some(l => l.currency === "USD");
+  const usesSGD = feeLines.some(l => l.currency === "SGD");
   const rateRows = [];
   if (usesUSD) rateRows.push([{ content: "USD → IDR rate", styles: { halign: "right" } }, fmtRp(fx.usd_idr)]);
   if (usesSGD) rateRows.push([{ content: "SGD → IDR rate", styles: { halign: "right" } }, fmtRp(fx.sgd_idr)]);
@@ -253,11 +223,11 @@ export function generateInvoicePDF(order, customer, shipment, courier, liveFx) {
     startY: (t1?.finalY ?? 100) + 4,
     body: [
       ...rateRows,
-      [{ content: "Sales Tax",         styles: { halign: "right" } }, ""],
-      [{ content: "Discount",          styles: { halign: "right" } }, ""],
-      [{ content: "Deposit Received",  styles: { halign: "right" } }, ""],
+      [{ content: "Sales Tax", styles: { halign: "right" } }, ""],
+      [{ content: "Discount", styles: { halign: "right" } }, ""],
+      [{ content: "Deposit Received", styles: { halign: "right" } }, ""],
       [{ content: "TOTAL", styles: { halign: "right", fontStyle: "bold", fillColor: BG } },
-       { content: fmtRp(totalIDR),    styles: { fontStyle: "bold", fillColor: BG } }],
+       { content: fmtRp(totalIDR), styles: { fontStyle: "bold", fillColor: BG } }],
     ],
     columnStyles: { 0: { cellWidth: 110 }, 1: { halign: "right", cellWidth: 70 } },
     styles: { fontSize: 9, cellPadding: 4, textColor: INK, lineColor: LN, lineWidth: 0.3 },
@@ -265,14 +235,8 @@ export function generateInvoicePDF(order, customer, shipment, courier, liveFx) {
     margin: M,
   });
 
-  // ── Bank details — page-break aware ────────────────────────────────────────
-  // Estimate total height of the bank block (~55 mm); if it won't fit on the
-  // current page, start a fresh page first.
-  const afterTotals = doc.lastAutoTable?.finalY ?? 170;
-  const bankBlockH  = 10 + COMPANY.banks.reduce((a, b) => a + 4.5 + b.lines.length * 4 + 3, 0) + 12;
-  const bankStartY  = ensureRoom(doc, afterTotals + 10, bankBlockH);
-
-  drawBankBlock(doc, bankStartY);
+  // Bank details — will add a new page if not enough space
+  drawBankDetails(doc, (doc.lastAutoTable?.finalY ?? 170) + 10);
 
   return doc;
 }
@@ -283,6 +247,7 @@ export function generateQuotationPDF({ customerName, packages, divisor, courierN
   const doc = new jsPDF();
   const cur = priceCurrency || "IDR";
 
+  // Title bar
   doc.setFillColor(...ACCENT);
   doc.rect(0, 0, 210, 12, "F");
   doc.setFontSize(16); doc.setFont("helvetica", "bold"); doc.setTextColor(255, 255, 255);
@@ -303,17 +268,17 @@ export function generateQuotationPDF({ customerName, packages, divisor, courierN
   const bx = 120, by = 20, bw = 75, bh = 24;
   doc.setDrawColor(...LN); doc.setLineWidth(0.3);
   doc.rect(bx, by, bw, bh);
-  doc.line(bx, by + 6,  bx + bw, by + 6);
+  doc.line(bx, by + 6, bx + bw, by + 6);
   doc.line(bx, by + 12, bx + bw, by + 12);
   doc.line(bx, by + 18, bx + bw, by + 18);
   doc.line(bx + 28, by, bx + 28, by + bh);
 
   const qno = "QT-" + Date.now().toString(36).toUpperCase().slice(-6);
   doc.setFontSize(7.5); doc.setFont("helvetica", "normal"); doc.setTextColor(...GRAY);
-  doc.text("Quote No:",  bx + 2, by + 4.5);
-  doc.text("Date:",      bx + 2, by + 10.5);
-  doc.text("Customer:",  bx + 2, by + 16.5);
-  doc.text("Courier:",   bx + 2, by + 22.5);
+  doc.text("Quote No:", bx + 2, by + 4.5);
+  doc.text("Date:", bx + 2, by + 10.5);
+  doc.text("Customer:", bx + 2, by + 16.5);
+  doc.text("Courier:", bx + 2, by + 22.5);
   doc.setFont("helvetica", "bold"); doc.setTextColor(...INK); doc.setFontSize(8);
   doc.text(qno, bx + 30, by + 4.5);
   doc.setFont("helvetica", "normal");
@@ -348,28 +313,32 @@ export function generateQuotationPDF({ customerName, packages, divisor, courierN
     startY: sepY + 6,
     head: [["Package", "Actual Weight", "Dimensions (L×W×H)", "Volumetric", "Greater-of", "Basis"]],
     body,
-    styles:     { fontSize: 8.5, cellPadding: 5, textColor: INK, lineColor: LN, lineWidth: 0.3 },
+    styles: { fontSize: 8.5, cellPadding: 5, textColor: INK, lineColor: LN, lineWidth: 0.3 },
     headStyles: { fillColor: BG, textColor: INK, fontStyle: "bold", fontSize: 8 },
-    theme: "grid", margin: M, rowPageBreak: "avoid",
+    theme: "grid",
+    margin: M,
+    rowPageBreak: "avoid",
   });
 
   const total = totalCharged * ratePerKg;
   autoTable(doc, {
     startY: (t1?.finalY ?? 80) + 8,
-    head: [["", ""]], showHead: false,
+    head: [["", ""]],
+    showHead: false,
     body: [
-      [{ content: "Total Actual Weight",     styles: { fontStyle: "bold" } }, `${totalActual.toFixed(1)} kg`],
-      ["Total Volumetric Weight",                                               `${totalVol.toFixed(1)} kg`],
-      [{ content: "Total Chargeable Weight", styles: { fontStyle: "bold", fillColor: [220,245,240] } },
-       { content: `${totalCharged.toFixed(1)} kg${minApplied ? " (3kg min)" : ""}`, styles: { fontStyle: "bold", fillColor: [220,245,240] } }],
+      [{ content: "Total Actual Weight", styles: { fontStyle: "bold" } }, `${totalActual.toFixed(1)} kg`],
+      ["Total Volumetric Weight", `${totalVol.toFixed(1)} kg`],
+      [{ content: "Total Chargeable Weight", styles: { fontStyle: "bold", fillColor: [220, 245, 240] } },
+       { content: `${totalCharged.toFixed(1)} kg` + (minApplied ? " (3kg min)" : ""), styles: { fontStyle: "bold", fillColor: [220, 245, 240] } }],
       ["", ""],
-      [{ content: "Rate per kg",    styles: { fontStyle: "bold" } }, fmtAmt(ratePerKg, cur)],
+      [{ content: "Rate per kg", styles: { fontStyle: "bold" } }, fmtAmt(ratePerKg, cur)],
       [{ content: "Estimated Total", styles: { fontStyle: "bold", fontSize: 11, fillColor: BG } },
        { content: fmtAmt(total, cur), styles: { fontStyle: "bold", fontSize: 11, fillColor: BG } }],
     ],
     columnStyles: { 0: { cellWidth: 100 }, 1: { halign: "right", cellWidth: 80 } },
     styles: { fontSize: 9, cellPadding: 4, textColor: INK, lineColor: LN, lineWidth: 0.3 },
-    theme: "grid", margin: M,
+    theme: "grid",
+    margin: M,
   });
 
   const fy = (doc.lastAutoTable?.finalY ?? 160) + 12;
