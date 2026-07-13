@@ -97,40 +97,8 @@ export function generateInvoicePDF(order, customer, shipment, courier, liveFx) {
 
   const cy = companyBlock(doc, 22);
 
-  // Info box
-  const bx = 113, by = 22, bw = 82;
-  const addrLines = customer?.address
-    ? doc.splitTextToSize(customer.address, bw - 34)
-    : ["—"];
-  const rowH = 8;
-  const bh = rowH * 3 + Math.max(addrLines.length, 1) * 4 + 4;
-
-  doc.setDrawColor(...LN); doc.setLineWidth(0.3);
-  doc.rect(bx, by, bw, bh);
-  doc.line(bx, by + rowH, bx + bw, by + rowH);
-  doc.line(bx, by + rowH * 2, bx + bw, by + rowH * 2);
-  doc.line(bx, by + rowH * 3, bx + bw, by + rowH * 3);
-  doc.line(bx + 30, by, bx + 30, by + bh);
-
-  const invNo = "INV-JEI/" + String(order.id).replace("ORD-", "");
-  doc.setFontSize(7.5); doc.setFont("helvetica", "normal"); doc.setTextColor(...GRAY);
-  doc.text("Invoice No.", bx + 2, by + 5.5);
-  doc.text("Invoice Date", bx + 2, by + rowH + 5.5);
-  doc.text("Bill To", bx + 2, by + rowH * 2 + 5.5);
-  doc.text("Ship to", bx + 2, by + rowH * 3 + 5);
-
-  doc.setFont("helvetica", "bold"); doc.setTextColor(...INK); doc.setFontSize(8.5);
-  doc.text(invNo, bx + 32, by + 5.5);
-  doc.setFont("helvetica", "normal"); doc.setFontSize(8);
-  doc.text(fmtDate(order.order_date), bx + 32, by + rowH + 5.5);
-  doc.setFont("helvetica", "bold");
-  doc.text(customer?.name || "—", bx + 32, by + rowH * 2 + 5.5);
-  doc.setFont("helvetica", "normal"); doc.setFontSize(7.5); doc.setTextColor(...GRAY);
-  addrLines.forEach((l, i) => doc.text(l, bx + 32, by + rowH * 3 + 5 + i * 3.8));
-  doc.setTextColor(...INK);
-
-  // Build fee lines — same logic as Dashboard quote()
-  const isAirM = (m) => m && m !== "Seafreight";
+  // Package/weight/CBM figures — computed early so both the shipment
+  // details block and the fee-line calculations below can use them.
   const div = +order.divisor || 5000;
   const pkgs = order.packages?.length > 0
     ? order.packages
@@ -140,12 +108,62 @@ export function generateInvoicePDF(order, customer, shipment, courier, liveFx) {
     const ch = chargeable({ l: +p.l, w: +p.w, h: +p.h }, +p.weight, div);
     totalRaw += ch.raw; totalActual += +p.weight; totalVol += ch.vol;
   });
+  const autoCBM = pkgs.reduce((a, p) => a + ((+p.l) * (+p.w) * (+p.h)) / 1_000_000, 0);
+
+  // Info box — Invoice No. / Invoice Date / Bill To (Ship-to removed)
+  const bx = 113, by = 22, bw = 82;
+  const rowH = 8;
+  const bh = rowH * 3;
+
+  doc.setDrawColor(...LN); doc.setLineWidth(0.3);
+  doc.rect(bx, by, bw, bh);
+  doc.line(bx, by + rowH, bx + bw, by + rowH);
+  doc.line(bx, by + rowH * 2, bx + bw, by + rowH * 2);
+  doc.line(bx + 30, by, bx + 30, by + bh);
+
+  const invNo = "INV-JEI/" + String(order.id).replace("ORD-", "");
+  doc.setFontSize(7.5); doc.setFont("helvetica", "normal"); doc.setTextColor(...GRAY);
+  doc.text("Invoice No.", bx + 2, by + 5.5);
+  doc.text("Invoice Date", bx + 2, by + rowH + 5.5);
+  doc.text("Bill To", bx + 2, by + rowH * 2 + 5.5);
+
+  doc.setFont("helvetica", "bold"); doc.setTextColor(...INK); doc.setFontSize(8.5);
+  doc.text(invNo, bx + 32, by + 5.5);
+  doc.setFont("helvetica", "normal"); doc.setFontSize(8);
+  doc.text(fmtDate(order.order_date), bx + 32, by + rowH + 5.5);
+  doc.setFont("helvetica", "bold");
+  doc.text(customer?.name || "—", bx + 32, by + rowH * 2 + 5.5);
+  doc.setTextColor(...INK);
+
+  // Shipment details — compact 2-column block below the logo/company info,
+  // pulled straight from the order/customer records.
+  const sdY = cy + 4;
+  doc.setFontSize(8); doc.setFont("helvetica", "bold"); doc.setTextColor(...ACCENT);
+  doc.text("SHIPMENT DETAILS", M.left, sdY);
+  const sdRowH = 5;
+  const sdCol2X = 105;
+  const sdRow = (y) => sdY + 5 + y * sdRowH;
+  const sdField = (x, y, label, value) => {
+    doc.setFont("helvetica", "bold"); doc.setFontSize(7.5); doc.setTextColor(...GRAY);
+    doc.text(label, x, y);
+    doc.setFont("helvetica", "normal"); doc.setTextColor(...INK);
+    doc.text(String(value ?? "—"), x + 26, y);
+  };
+  sdField(M.left, sdRow(0), "Shipping Mark:", order.marking_code || "—");
+  sdField(sdCol2X, sdRow(0), "Shipper:", order.supplier_name || "—");
+  sdField(M.left, sdRow(1), "No. of Packages:", pkgs.length);
+  sdField(sdCol2X, sdRow(1), "Weight:", `${totalActual.toFixed(1)} kg`);
+  sdField(M.left, sdRow(2), "Dimensions:", `${autoCBM.toFixed(3)} CBM`);
+  doc.setTextColor(...INK);
+  const sdBottomY = sdRow(2) + 3;
+
+  // Build fee lines — same logic as Dashboard quote()
+  const isAirM = (m) => m && m !== "Seafreight";
   const chargedAuto = finalizeCharged(totalRaw).charged;
   const charged = +order.charged_override || chargedAuto;
   const rate = +order.price_per_kg || 0;
   const feeMode = isAirM(order.shipping_us_sg) && isAirM(order.shipping_sg_id) ? "air_air"
     : isAirM(order.shipping_us_sg) && !isAirM(order.shipping_sg_id) ? "air_sea" : "sea_sea";
-  const autoCBM = pkgs.reduce((a, p) => a + ((+p.l) * (+p.w) * (+p.h)) / 1_000_000, 0);
   const cbmA = +order.cbm_us_sg || autoCBM;
   const cbmB = +order.cbm_sg_id || autoCBM;
   const getKg = (basis) => {
@@ -198,13 +216,13 @@ export function generateInvoicePDF(order, customer, shipment, courier, liveFx) {
   // Fee lines table — autoTable handles page breaks automatically, adding
   // as many pages as needed for a long list of extra costs/fees.
   autoTable(doc, {
-    startY: Math.max(cy, by + bh) + 6,
+    startY: Math.max(sdBottomY, by + bh) + 5,
     head: [["Description", "Amount", "In IDR"]],
     body: feeLines.length > 0
       ? feeLines.map(l => [l.label, fmtAmt(l.amount, l.currency), fmtRp(toIDR(l.amount, l.currency))])
       : [["No fee lines recorded", "", ""]],
-    styles: { fontSize: 8.5, cellPadding: 5, textColor: INK, lineColor: LN, lineWidth: 0.3 },
-    headStyles: { fillColor: BG, textColor: INK, fontStyle: "bold" },
+    styles: { fontSize: 8, cellPadding: 2.5, textColor: INK, lineColor: LN, lineWidth: 0.3 },
+    headStyles: { fillColor: BG, textColor: INK, fontStyle: "bold", cellPadding: 2.5 },
     columnStyles: { 0: { cellWidth: 100 }, 1: { halign: "right", cellWidth: 40 }, 2: { halign: "right", cellWidth: 40 } },
     theme: "grid",
     margin: M,
@@ -238,7 +256,7 @@ export function generateInvoicePDF(order, customer, shipment, courier, liveFx) {
        { content: fmtRp(totalIDR), styles: { fontStyle: "bold", fillColor: BG } }],
     ],
     columnStyles: { 0: { cellWidth: 110 }, 1: { halign: "right", cellWidth: 70 } },
-    styles: { fontSize: 9, cellPadding: 4, textColor: INK, lineColor: LN, lineWidth: 0.3 },
+    styles: { fontSize: 8.5, cellPadding: 3, textColor: INK, lineColor: LN, lineWidth: 0.3 },
     theme: "grid",
     margin: M,
   });
