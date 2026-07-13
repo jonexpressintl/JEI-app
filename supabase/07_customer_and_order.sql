@@ -1,21 +1,15 @@
 -- ============================================================================
--- JEI — Migration 14: anon read-only access for Google Sheets backup
--- Run in Supabase → SQL Editor
---
--- The free Apps Script backup calls Supabase using the public "anon" key
--- (no login). By default RLS only allows "authenticated" users to read.
--- This adds read-only policies for the anon role on the 4 tables that get
--- backed up. It does NOT expose shipment_costs or fx_rates (owner-only
--- financial data stays protected), and does NOT allow anon writes anywhere.
+-- JEI — Migration 07: customer profile + order-level pricing
+-- Run in Supabase → SQL Editor after previous migrations.
 -- ============================================================================
 
-create policy "anon read orders for backup"    on orders     for select to anon using (true);
-create policy "anon read customers for backup" on customers  for select to anon using (true);
-create policy "anon read shipments for backup" on shipments  for select to anon using (true);
-create policy "anon read couriers for backup"  on couriers   for select to anon using (true);
+-- Customer profile fields (all optional, populated from order form or Customer tab)
+alter table customers add column if not exists states text;
+alter table customers add column if not exists shipping_mark text;
+alter table customers add column if not exists contact_number text;
+alter table customers add column if not exists address text;
 
--- To revoke this later (e.g. if you stop using the backup):
---   drop policy "anon read orders for backup" on orders;
---   drop policy "anon read customers for backup" on customers;
---   drop policy "anon read shipments for backup" on shipments;
---   drop policy "anon read couriers for backup" on couriers;
+-- Order-level fields
+alter table orders add column if not exists order_date date default current_date;
+alter table orders add column if not exists price_per_kg numeric default 0;
+alter table orders add column if not exists sell_currency text default 'IDR';

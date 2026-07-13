@@ -1,88 +1,83 @@
 import { createContext, useContext, useEffect, useState } from "react";
-import { supabase } from "./supabase";
+import { supabase } from "../lib/supabase";
 
-const AuthContext = createContext(null);
+const AuthCtx = createContext(null);
+export const useAuth = () => useContext(AuthCtx);
 
 export function AuthProvider({ children }) {
-  const [session, setSession]       = useState(undefined); // undefined = loading
-  const [profile, setProfile]       = useState(null);
-  const [passcodeCleared, setPasscodeCleared] = useState(false);
+  const [session, setSession] = useState(null);
+  const [profile, setProfile] = useState(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Get current session on mount
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session ?? null);
-      if (session) loadProfile(session.user.id);
+    supabase.auth.getSession().then(({ data }) => {
+      setSession(data.session);
+      if (!data.session) setLoading(false);
     });
-
-    // Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session ?? null);
-      if (!session) { setProfile(null); setPasscodeCleared(false); }
-      else loadProfile(session.user.id);
+    const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => {
+      setSession(s);
+      if (!s) { setProfile(null); setLoading(false); }
     });
-    return () => subscription.unsubscribe();
+    return () => sub.subscription.unsubscribe();
   }, []);
 
-  async function loadProfile(userId) {
-    const { data } = await supabase
+  // When a session exists, load the role from profiles
+  useEffect(() => {
+    if (!session) return;
+    let active = true;
+    supabase
       .from("profiles")
-      .select("full_name, role, pass_hash")
-      .eq("id", userId)
-      .single();
-    setProfile(data ?? null);
-  }
+      .select("full_name, role")
+      .eq("id", session.user.id)
+      .single()
+      .then(({ data }) => {
+        if (!active) return;
+        setProfile(data);
+        setLoading(false);
+      });
+    return () => { active = false; };
+  }, [session]);
 
-  async function signIn(email, password) {
-    const result = await supabase.auth.signInWithPassword({ email, password });
-    return result;
-  }
+  const signIn = (email, password) =>
+    supabase.auth.signInWithPassword({ email, password });
+  const signOut = () => supabase.auth.signOut();
 
-  async function signOut() {
-    setPasscodeCleared(false);
-    await supabase.auth.signOut();
-  }
+  // ── Per-user second-factor passcode (verified server-side) ──
+  const [passcodeCleared, setPasscodeCleared] = useState(false);
 
-  // Check whether this user has already set a passcode (pass_hash not null)
-  async function hasPasscode() {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return false;
-    const { data } = await supabase
-      .from("profiles")
-      .select("pass_hash")
-      .eq("id", user.id)
-      .single();
-    return !!data?.pass_hash;
-  }
-
-  // Verify entered passcode against stored bcrypt hash via RPC
-  async function verifyPasscode(code) {
-    const { data } = await supabase.rpc("verify_my_passcode", { passcode: code });
+  // verify the current user's passcode
+  const verifyPasscode = async (candidate) => {
+    const { data, error } = await supabase.rpc("verify_my_passcode", { candidate });
+    if (error) return false;
     if (data === true) setPasscodeCleared(true);
     return data === true;
-  }
+  };
+  // set/create the current user's passcode (first-time or change)
+  const setPasscode = async (new_code) => {
+    const { error } = await supabase.rpc("set_my_passcode", { new_code });
+    if (!error) setPasscodeCleared(true);
+    return { error };
+  };
+  // has this user set a passcode yet?
+  const hasPasscode = async () => {
+    const { data } = await supabase.rpc("my_passcode_set");
+    return data === true;
+  };
 
-  // Set a new passcode for the current user via RPC
-  async function setPasscode(code) {
-    const result = await supabase.rpc("set_my_passcode", { passcode: code });
-    if (!result.error) setPasscodeCleared(true);
-    return result;
-  }
+  // Re-lock whenever the logged-in user changes (new login must re-enter)
+  useEffect(() => { setPasscodeCleared(false); }, [session?.user?.id]);
 
-  const isOwner = profile?.role === "owner";
-  const loading = session === undefined;
-
-  return (
-    <AuthContext.Provider value={{
-      session, profile, isOwner, loading,
-      passcodeCleared, signIn, signOut,
-      hasPasscode, verifyPasscode, setPasscode,
-    }}>
-      {children}
-    </AuthContext.Provider>
-  );
-}
-
-export function useAuth() {
-  return useContext(AuthContext);
+  const value = {
+    session,
+    profile,
+    loading,
+    isOwner: profile?.role === "owner",
+    passcodeCleared,
+    verifyPasscode,
+    setPasscode,
+    hasPasscode,
+    signIn,
+    signOut,
+  };
+  return <AuthCtx.Provider value={value}>{children}</AuthCtx.Provider>;
 }
