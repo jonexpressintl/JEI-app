@@ -1,7 +1,7 @@
 import { useState, useMemo, useRef, useEffect } from "react";
-import { Package, Ship, Truck, Eye, EyeOff, Search, ChevronRight, AlertCircle, CheckCircle2, FileText, Calculator, Tag, LayoutGrid, Plus, Printer, LogOut, RefreshCw, Pencil, Boxes, Circle, CreditCard, ExternalLink, Copy, Check, Download, Upload, Users, DollarSign, TrendingUp, Trash2, X, Filter } from "lucide-react";
+import { Package, Ship, Truck, Eye, EyeOff, Search, ChevronRight, AlertCircle, CheckCircle2, FileText, Calculator, Tag, LayoutGrid, Plus, Printer, LogOut, RefreshCw, Pencil, Boxes, Circle, CreditCard, ExternalLink, Copy, Check, Download, Upload, Users, DollarSign, TrendingUp, Trash2 } from "lucide-react";
 import { useAuth } from "../lib/auth";
-import { useJEIData, updateCustomerRate, updateCustomer, addCustomer, setShipmentStage, setShipmentPayment, setShipmentTracking, completeOrder, markAsInvoiced, markTabDone, updateOrder, cascadeDeleteOrder, addCostEntry, updateCostEntry, deleteCostEntry } from "../lib/data";
+import { useJEIData, updateCustomerRate, addCustomer, setShipmentStage, setShipmentPayment, setShipmentTracking, completeOrder, markAsInvoiced, updateOrder, cascadeDeleteOrder, addCostEntry, updateCostEntry, deleteCostEntry } from "../lib/data";
 import { chargeable, finalizeCharged, fmtIDR, fmtShort, toIDR, trackingUrl, MIN_KG, IN_TO_CM, LB_TO_KG } from "../lib/pricing";
 import { generateInvoicePDF, generateQuotationPDF } from "../lib/pdf";
 import ConfirmDialog from "../components/ConfirmDialog";
@@ -103,11 +103,12 @@ export default function Dashboard() {
         return charged;
       };
       const airKgQ = getKg(airBasis);
+      const seaKgQ = getKg(seaBasis);
       const airTotalQ = (+o.fee_1||0) * airKgQ;
-      const seaCBMTotal = (+o.fee_2||0) * cbmB; // sea leg is CBM-based, not kg-based
+      const seaTotalQ = (+o.fee_2||0) * seaKgQ;
       if (+o.fee_1) feeLines.push({ label: `Airfreight (${airKgQ.toFixed(1)} kg × ${o.fee_1_cur==="USD"?"$":o.fee_1_cur==="SGD"?"S$":"Rp"}${(+o.fee_1).toLocaleString()}, ${airBasis})`, amount: airTotalQ, currency: o.fee_1_cur || "USD" });
       if (+o.fee_clearance) feeLines.push({ label: "Clearance fee", amount: +o.fee_clearance, currency: o.fee_clearance_cur || "SGD" });
-      if (+o.fee_2) feeLines.push({ label: `Seafreight SIN→JKT (${cbmB.toFixed(4)} m³ × ${o.fee_2_cur==="USD"?"$":o.fee_2_cur==="SGD"?"S$":"Rp"}${(+o.fee_2).toLocaleString()}/CBM)`, amount: seaCBMTotal, currency: o.fee_2_cur || "IDR" });
+      if (+o.fee_2) feeLines.push({ label: `Seafreight (${seaKgQ.toFixed(1)} kg × ${o.fee_2_cur==="USD"?"$":o.fee_2_cur==="SGD"?"S$":"Rp"}${(+o.fee_2).toLocaleString()}, ${seaBasis})`, amount: seaTotalQ, currency: o.fee_2_cur || "IDR" });
       if (+o.fee_additional) feeLines.push({ label: "Additional cost", amount: +o.fee_additional, currency: o.fee_additional_cur || "USD" });
     } else { // sea_sea
       if (+o.fee_1) feeLines.push({ label: `Seafreight USA→SIN (${cbmA.toFixed(2)} CBM × ${(+o.fee_1).toLocaleString()})`, amount: sf1Total, currency: o.fee_1_cur || "USD" });
@@ -129,7 +130,7 @@ export default function Dashboard() {
     return shipCostIDR(o.shipment_id) * (Number(o.sell_idr)/tot);
   };
 
-  const ctx = { D, isOwner, custName, custRate, courierOf, shipmentOf, costsFor, quote, orderCostIDR, shipCostIDR, reload: D.reload, patchOrder: D.patchOrder, patchCustomer: D.patchCustomer, patchShipment: D.patchShipment, liveFx, refreshFx };
+  const ctx = { D, isOwner, custName, custRate, courierOf, shipmentOf, costsFor, quote, orderCostIDR, shipCostIDR, reload: D.reload, patchOrder: D.patchOrder, liveFx, refreshFx };
   const TABS = [
     {k:"orders",label:"Orders",icon:LayoutGrid},
     {k:"shipments",label:"Shipments",icon:Boxes},
@@ -194,57 +195,6 @@ export default function Dashboard() {
 
 const stageIcon = (st)=>{const i=STAGES.indexOf(st);if(i<=0)return <Package size={14}/>;if(i<=3)return <Ship size={14}/>;if(i===STAGES.length-1)return <CheckCircle2 size={14}/>;return <Truck size={14}/>;};
 
-// ──────────── TAB STATUS BAR ────────────
-// Shows 3 dots: Shipment · Invoice · Cost — green when done
-// Fixed-width layout so dots align perfectly across all card rows
-function TabStatusBar({order, style={}}){
-  const tabs=[
-    {key:"shipment",label:"Shipment"},
-    {key:"invoice", label:"Invoice"},
-    {key:"cost",    label:"Cost"},
-  ];
-  return(
-    <div style={{display:"flex",alignItems:"center",gap:0,...style}}>
-      {tabs.map(t=>{
-        const done=!!order?.[`${t.key}_done`];
-        return(
-          <div key={t.key} style={{display:"flex",alignItems:"center",gap:4,width:80,flexShrink:0}}>
-            <div style={{width:8,height:8,borderRadius:"50%",background:done?"var(--good)":"var(--line)",border:done?"none":"1px solid var(--ink-3)",flexShrink:0,transition:"background .2s"}}/>
-            <span style={{fontSize:11,color:done?"var(--good)":"var(--ink-3)",fontWeight:done?700:400,whiteSpace:"nowrap"}}>{t.label}</span>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-// ──────────── COMPLETE ALL BUTTON ────────────
-// Shown in all 3 tabs once shipment_done + invoice_done + cost_done are all true
-function CompleteAllButton({order,ctx,onDone}){
-  const {patchOrder}=ctx;
-  const allDone=order?.shipment_done&&order?.invoice_done&&order?.cost_done;
-  const [busy,setBusy]=useState(false);
-  if(!allDone||order?.completed) return null;
-  async function handle(){
-    setBusy(true);
-    await completeOrder(order.id,{sell_idr:order.sell_idr||0});
-    patchOrder&&patchOrder(order.id,{completed:true,completed_at:new Date().toISOString()});
-    onDone&&onDone();
-    setBusy(false);
-  }
-  return(
-    <div style={{background:"var(--good-bg)",border:"1px solid var(--good)",borderRadius:10,padding:"12px 16px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,marginTop:16}}>
-      <div style={{display:"flex",alignItems:"center",gap:8}}>
-        <CheckCircle2 size={16} style={{color:"var(--good)"}}/>
-        <span style={{fontWeight:700,color:"var(--good)",fontSize:13}}>All tabs completed — ready to archive</span>
-      </div>
-      <button style={{...S.printBtn,background:"var(--good)",minWidth:160}} onClick={handle} disabled={busy}>
-        {busy?"Moving…":"✓ Move to Completed"}
-      </button>
-    </div>
-  );
-}
-
 // ──────────── ORDERS ────────────
 function Orders({ctx}){
   const {D,isOwner,custName,courierOf,shipmentOf,quote,orderCostIDR,reload}=ctx;
@@ -252,7 +202,7 @@ function Orders({ctx}){
   const [formOpen,setFormOpen]=useState(false);
   const [editOrder,setEditOrder]=useState(null);
   const list=useMemo(()=>D.orders.filter(o=>!o.completed).filter(o=>[o.id,custName(o.customer_id),o.product,o.shipment_id].join(" ").toLowerCase().includes(q.toLowerCase())),[q,D.orders]);
-  const t=useMemo(()=>{const active=D.orders.filter(o=>!o.completed);const rev=active.reduce((a,o)=>a+Number(o.sell_idr),0);const cost=active.reduce((a,o)=>a+orderCostIDR(o),0);const del=active.filter(o=>shipmentOf(o.shipment_id)?.stage==="Delivered to customer").length;return{active:active.length,rev,cost,profit:rev-cost,del,fly:active.length-del};},[D.orders]);
+  const t=useMemo(()=>{const active=D.orders.filter(o=>!o.completed);const rev=active.reduce((a,o)=>a+Number(o.sell_idr),0);const cost=active.reduce((a,o)=>a+orderCostIDR(o),0);const del=active.filter(o=>shipmentOf(o.shipment_id)?.stage==="Delivered to customer").length;return{rev,cost,profit:rev-cost,del,fly:active.length-del};},[D.orders]);
 
   const openNew=()=>{setEditOrder(null);setFormOpen(true);};
   const openEdit=(o)=>{setEditOrder(o);setFormOpen(true);};
@@ -260,7 +210,7 @@ function Orders({ctx}){
 
   return(<>
     <section style={S.kpis}>
-      <Kpi label="Active orders" value={t.active} sub={`${t.fly} in flight · ${t.del} delivered`}/>
+      <Kpi label="Active orders" value={D.orders.length} sub={`${t.fly} in flight · ${t.del} delivered`}/>
       {isOwner?<>
         <Kpi label="Revenue (booked)" value={fmtShort(t.rev)} sub="all open orders" accent/>
         <Kpi label="Landed cost" value={fmtShort(t.cost)} sub="freight+handling+delivery"/>
@@ -278,34 +228,22 @@ function Orders({ctx}){
     </div>
     <div style={S.card}>
       <div style={S.tHead}>
-        <span style={{flex:"0 0 96px"}}>Order</span>
-        <span style={{flex:2}}>Customer / Product</span>
-        <span style={{flex:"0 0 100px",textAlign:"right"}}>Charged kg</span>
-        <span style={{flex:2}}>Stage</span>
-        <span style={{flex:"0 0 90px",textAlign:"center"}}>Payment</span>
-        {isOwner&&<span style={{flex:1,textAlign:"right"}}>Revenue</span>}
-        {isOwner&&<span style={{flex:"0 0 70px",textAlign:"right"}}>Margin</span>}
-        {!isOwner&&<span style={{flex:1}}>ETA ID</span>}
-        <span style={{flex:"0 0 44px"}}/>
+        <span style={{flex:"0 0 88px"}}>Order</span><span style={{flex:2}}>Customer / Product</span>
+        <span style={{flex:"0 0 90px",textAlign:"right"}}>Charged kg</span><span style={{flex:1.7}}>Stage</span>
+        {isOwner&&<span style={{flex:1,textAlign:"right"}}>Revenue</span>}{isOwner&&<span style={{flex:.8,textAlign:"right"}}>Margin</span>}
+        {!isOwner&&<span style={{flex:1}}>ETA ID</span>}<span style={{flex:"0 0 44px"}}/>
       </div>
       {list.map(o=>{const s=shipmentOf(o.shipment_id);const qd=quote(o);const cost=orderCostIDR(o);const m=Number(o.sell_idr)-cost;const mp=Number(o.sell_idr)?m/Number(o.sell_idr)*100:0;const consol=D.orders.filter(x=>x.shipment_id===o.shipment_id).length>1;return(
-        <div key={o.id} style={{...S.row,padding:"14px 16px"}} className="row">
-          <span style={{flex:"0 0 96px",fontFamily:"var(--mono)",fontSize:12,color:"var(--ink-3)",cursor:"pointer"}} onClick={()=>setSel(sel===o.id?null:o.id)}>{o.id}</span>
-          <span style={{flex:2,cursor:"pointer"}} onClick={()=>setSel(sel===o.id?null:o.id)}>
-            <div style={{fontWeight:600}}>{custName(o.customer_id)}</div>
-            <div style={{fontSize:12,color:"var(--ink-3)"}}>{o.product}</div>
-          </span>
-          <span style={{flex:"0 0 100px",textAlign:"right",fontVariantNumeric:"tabular-nums"}}>
-            {qd.charged.toFixed(1)}<span style={{fontSize:10,color:"var(--ink-3)",marginLeft:3}}>{qd.minApplied?"min":qd.basis==="volumetric"?"vol":"act"}</span>
-          </span>
-          <span style={{flex:2}}>
+        <div key={o.id} style={S.row} className="row">
+          <span style={{flex:"0 0 88px",fontFamily:"var(--mono)",fontSize:12,color:"var(--ink-3)",cursor:"pointer"}} onClick={()=>setSel(sel===o.id?null:o.id)}>{o.id}</span>
+          <span style={{flex:2,cursor:"pointer"}} onClick={()=>setSel(sel===o.id?null:o.id)}><div style={{fontWeight:600}}>{custName(o.customer_id)}</div><div style={{fontSize:12,color:"var(--ink-3)"}}>{o.product}</div></span>
+          <span style={{flex:"0 0 90px",textAlign:"right",fontVariantNumeric:"tabular-nums"}}>{qd.charged.toFixed(1)}<span style={{fontSize:10,color:"var(--ink-3)",marginLeft:3}}>{qd.minApplied?"min":qd.basis==="volumetric"?"vol":"act"}</span></span>
+          <span style={{flex:1.7}}>
             <span className="stage" data-final={s?.stage==="Delivered to customer"}>{stageIcon(s?.stage)} {s?.stage}</span>
-          </span>
-          <span style={{flex:"0 0 90px",textAlign:"center"}}>
             <span className={"paybadge pay-"+(s?.payment??"Unpaid")}>{s?.payment??"Unpaid"}</span>
           </span>
           {isOwner&&<span style={{flex:1,textAlign:"right",fontVariantNumeric:"tabular-nums"}}>{fmtShort(Number(o.sell_idr))}</span>}
-          {isOwner&&<span style={{flex:"0 0 70px",textAlign:"right"}}><span style={{...S.pill,background:mp>40?"var(--good-bg)":mp>20?"var(--warn-bg)":"var(--bad-bg)",color:mp>40?"var(--good)":mp>20?"var(--warn)":"var(--bad)"}}>{mp.toFixed(0)}%</span></span>}
+          {isOwner&&<span style={{flex:.8,textAlign:"right"}}><span style={{...S.pill,background:mp>40?"var(--good-bg)":mp>20?"var(--warn-bg)":"var(--bad-bg)",color:mp>40?"var(--good)":mp>20?"var(--warn)":"var(--bad)"}}>{mp.toFixed(0)}%</span></span>}
           {!isOwner&&<span style={{flex:1,fontSize:13,color:"var(--ink-2)"}}>{s?.eta_id ? new Date(s.eta_id).toLocaleDateString("en-GB") : "—"}</span>}
           <span style={{flex:"0 0 44px",display:"flex",justifyContent:"flex-end",gap:4}}>
             <button style={S.iconMini} title="Edit" onClick={()=>openEdit(o)}><Pencil size={14}/></button>
@@ -314,8 +252,6 @@ function Orders({ctx}){
             <div style={S.detailGrid}>
               <Detail label="Order date" value={o.order_date ? new Date(o.order_date).toLocaleDateString("en-GB") : "—"}/>
               <Detail label="Shipment" value={o.shipment_id+(consol?" (consolidated)":" (single)")}/>
-              <Detail label="Supplier / shipper" value={o.supplier_name||"—"}/>
-              {o.marking_code&&<Detail label="Marking code" value={<span style={{background:"var(--gold)",color:"var(--navy)",fontWeight:800,padding:"1px 8px",borderRadius:5,letterSpacing:".06em"}}>{o.marking_code}</span>} strong/>}
               <Detail label="Courier" value={`${courierOf(s?.courier_id)?.name??"—"} · ÷${qd.divisor}`}/>
               <Detail label="Actual weight" value={`${o.weight_kg} kg`}/>
               <Detail label="Volumetric" value={`${qd.vol.toFixed(1)} kg`}/>
@@ -334,35 +270,16 @@ function Orders({ctx}){
 
 // ──────────── SHIPMENTS (checkpoint tracking) ────────────
 function Shipments({ctx}){
-  const {D,custName,courierOf,reload,patchOrder,patchShipment}=ctx;
+  const {D,custName,courierOf,reload}=ctx;
   const [busy,setBusy]=useState(null);
   const [q,setQ]=useState("");
   const [stageFilter,setStageFilter]=useState(null); // null = all stages
 
-  async function advance(sid,stage){
-    setBusy(sid+stage);
-    await setShipmentStage(sid,stage);
-    patchShipment&&patchShipment(sid,{stage,stage_updated_at:new Date().toISOString()});
-    // Auto-sync shipment_done on all orders in this shipment based on stage
-    const isDelivered = stage==="Delivered to customer";
-    const ordersInShipment = D.orders.filter(o=>o.shipment_id===sid&&!o.completed);
-    await Promise.all(ordersInShipment.map(async o=>{
-      if(!!o.shipment_done !== isDelivered){
-        await markTabDone(o.id,"shipment",isDelivered);
-        patchOrder&&patchOrder(o.id,{shipment_done:isDelivered});
-      }
-    }));
-    setBusy(null);
-  }
-  async function setPay(sid,payment){
-    setBusy(sid+payment);
-    await setShipmentPayment(sid,payment);
-    patchShipment&&patchShipment(sid,{payment,payment_updated_at:new Date().toISOString()});
-    setBusy(null);
-  }
+  async function advance(sid,stage){setBusy(sid+stage);await setShipmentStage(sid,stage);await reload();setBusy(null);}
+  async function setPay(sid,payment){setBusy(sid+payment);await setShipmentPayment(sid,payment);await reload();setBusy(null);}
 
-  // Only show shipments that have at least one non-completed order
-  const activeShipments=D.shipments.filter(s=>D.orders.some(o=>o.shipment_id===s.id&&!o.completed));
+  // Only show shipments that have at least one order
+  const activeShipments=D.shipments.filter(s=>D.orders.some(o=>o.shipment_id===s.id));
   const stageCounts=STAGES.map(st=>activeShipments.filter(s=>s.stage===st).length);
   const list=activeShipments
     .filter(s=>stageFilter===null||s.stage===stageFilter)
@@ -403,7 +320,7 @@ function Shipments({ctx}){
 
     <div style={{display:"flex",flexDirection:"column",gap:14}}>
       {list.map(s=>{
-        const orders=D.orders.filter(o=>o.shipment_id===s.id&&!o.completed);
+        const orders=D.orders.filter(o=>o.shipment_id===s.id);
         const stageIdx=STAGES.indexOf(s.stage);
         return(
           <div key={s.id} style={S.shipCard}>
@@ -412,6 +329,7 @@ function Shipments({ctx}){
                 <div style={{display:"flex",alignItems:"center",gap:8}}>
                   <span style={{fontFamily:"var(--mono)",fontWeight:700,fontSize:15}}>{s.id}</span>
                   <span style={{fontSize:12.5,color:"var(--ink-3)"}}>{courierOf(s.courier_id)?.name} · ÷{courierOf(s.courier_id)?.divisor}</span>
+                  <span className={"paybadge pay-"+s.payment}>{s.payment}</span>
                 </div>
                 <div style={{fontSize:12.5,color:"var(--ink-3)",marginTop:3}}>
                   {orders.length} order{orders.length!==1?"s":""}: {orders.map(o=>custName(o.customer_id)).join(", ")||"—"}
@@ -442,34 +360,16 @@ function Shipments({ctx}){
               })}
             </div>
 
-            {/* Order info panel — sits where payment row used to be */}
-            {orders.map(o=>{
-              const pkgs=o.packages||[];
-              const nPkgs=pkgs.length||o.qty||1;
-              const totalKg=pkgs.reduce((a,p)=>a+(+p.weight||0),0)||o.weight_kg||0;
-              const totalCBM=pkgs.reduce((a,p)=>a+(+p.l||0)*(+p.w||0)*(+p.h||0)/1000000,0);
-              return(
-                <div key={"inf-"+o.id} style={{borderTop:"1px solid var(--line)",padding:"12px 0 4px"}}>
-                  <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:"8px 16px"}}>
-                    <div><span style={{fontSize:10,fontWeight:700,color:"var(--ink-3)",letterSpacing:".06em",display:"block",marginBottom:2}}>CUSTOMER</span>
-                      <span style={{fontWeight:700,fontSize:13}}>{custName(o.customer_id)}</span></div>
-                    <div><span style={{fontSize:10,fontWeight:700,color:"var(--ink-3)",letterSpacing:".06em",display:"block",marginBottom:2}}>MARKING CODE</span>
-                      {o.marking_code
-                        ? <span style={{background:"var(--gold)",color:"var(--navy)",fontWeight:800,fontSize:13,padding:"2px 10px",borderRadius:6,letterSpacing:".06em",display:"inline-block"}}>{o.marking_code}</span>
-                        : <span style={{fontSize:12,color:"var(--ink-3)"}}>—</span>}
-                    </div>
-                    <div><span style={{fontSize:10,fontWeight:700,color:"var(--ink-3)",letterSpacing:".06em",display:"block",marginBottom:2}}>SHIPPER</span>
-                      <span style={{fontSize:13}}>{o.supplier_name||"—"}</span></div>
-                    <div><span style={{fontSize:10,fontWeight:700,color:"var(--ink-3)",letterSpacing:".06em",display:"block",marginBottom:2}}>PACKAGES</span>
-                      <span style={{fontSize:13}}>{nPkgs} pkg{nPkgs!==1?"s":""}</span></div>
-                    <div><span style={{fontSize:10,fontWeight:700,color:"var(--ink-3)",letterSpacing:".06em",display:"block",marginBottom:2}}>WEIGHT</span>
-                      <span style={{fontSize:13}}>{totalKg.toFixed(2)} kg</span></div>
-                    <div><span style={{fontSize:10,fontWeight:700,color:"var(--ink-3)",letterSpacing:".06em",display:"block",marginBottom:2}}>VOLUME</span>
-                      <span style={{fontSize:13}}>{totalCBM>0?`${totalCBM.toFixed(4)} m³`:"—"}</span></div>
-                  </div>
-                </div>
-              );
-            })}
+            {/* payment control */}
+            <div style={S.payRow}>
+              <span style={{fontSize:12.5,color:"var(--ink-3)",display:"flex",alignItems:"center",gap:6}}><CreditCard size={14}/> Payment · updated {fmtDate(s.payment_updated_at)}</span>
+              <div style={{display:"flex",gap:6}}>
+                {PAYMENTS.map(p=>(
+                  <button key={p} onClick={()=>setPay(s.id,p)} disabled={busy===s.id+p}
+                    className={"payseg "+(s.payment===p?"on pay-"+p:"")}>{p}</button>
+                ))}
+              </div>
+            </div>
 
             {/* tracking numbers — hide legs beyond SG if destination is Singapore */}
             <div style={S.trackWrap}>
@@ -484,26 +384,6 @@ function Shipments({ctx}){
                 ))}
               </div>
             </div>
-
-            {/* Per-order status bar — kept at bottom */}
-            {orders.length>0&&(
-              <div style={{borderTop:"1px solid var(--line)",padding:"10px 0 4px",display:"flex",flexDirection:"column",gap:8}}>
-                <div style={{fontSize:11,fontWeight:700,color:"var(--ink-3)",letterSpacing:".04em",marginBottom:2}}>ORDER SHIPMENT STATUS</div>
-                {orders.map(o=>(
-                  <div key={o.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"6px 10px",background:"var(--head)",borderRadius:8}}>
-                    <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-                      <span style={{fontFamily:"var(--mono)",fontSize:12,color:"var(--ink-3)"}}>{o.id}</span>
-                      <span style={{fontWeight:600,fontSize:13}}>{custName(o.customer_id)}</span>
-                      <TabStatusBar order={o}/>
-                    </div>
-                    {o.shipment_done
-                      ? <span style={{fontSize:11,color:"var(--good)",fontWeight:700,flexShrink:0}}>✓ Delivered</span>
-                      : <span style={{fontSize:11,color:"var(--ink-3)",flexShrink:0}}>Awaiting delivery</span>
-                    }
-                  </div>
-                ))}
-              </div>
-            )}
           </div>
         );
       })}
@@ -594,7 +474,6 @@ function QuoteCalc({ctx}){
   const [feeAdd,setFeeAdd]=useState(0);const [feeAddCur,setFeeAddCur]=useState("USD");
   const [fxUSD,setFxUSD]=useState("");const [fxSGD,setFxSGD]=useState("");
   const [cbmUsSgOvr,setCbmUsSgOvr]=useState("");const [cbmSgIdOvr,setCbmSgIdOvr]=useState("");
-  const [airWeightBasis,setAirWeightBasis]=useState("charged");
   function sPkg(i,k,v){const p=[...pkgs];p[i]={...p[i],[k]:v};setPkgs(p);}
   function addP(){setPkgs([...pkgs,{weight:0,l:0,w:0,h:0,unit:"metric"}]);}
   function remP(i){if(pkgs.length>1)setPkgs(pkgs.filter((_,j)=>j!==i));}
@@ -604,16 +483,12 @@ function QuoteCalc({ctx}){
   function pickC(c){setCustName(c.name);setCustId(c.id);setPricePerKg(c.rate_per_kg||0);setPriceCur(c.rate_currency||"USD");setDdOpen(false);}
   const div=shUsSg==="Seafreight"||shUsSg==="FedEx Freight"?6000:5000;
   const mPkgs=pkgs.map(p=>{const u=p.unit||"metric";return{weight:u==="imperial"?+p.weight*LB_TO_KG:+p.weight,l:u==="imperial"?+p.l*IN_TO_CM:+p.l,w:u==="imperial"?+p.w*IN_TO_CM:+p.w,h:u==="imperial"?+p.h*IN_TO_CM:+p.h};});
-  let tRaw=0,tActual=0,tVol=0;
-  mPkgs.forEach(p=>{const ch=chargeable({l:p.l,w:p.w,h:p.h},p.weight,div);tRaw+=ch.raw;tActual+=p.weight;tVol+=ch.vol;});
+  let tRaw=0;mPkgs.forEach(p=>{tRaw+=chargeable({l:p.l,w:p.w,h:p.h},p.weight,div).raw;});
   const tAuto=finalizeCharged(tRaw).charged;const tCharged=+chargedOvr||tAuto;
-  const getKgQ=(basis)=>{if(basis==="actual")return finalizeCharged(tActual).charged;if(basis==="volumetric")return finalizeCharged(tVol).charged;return tCharged;};
-  const airKgQ=getKgQ(airWeightBasis);
   const wPrice=tCharged*(+pricePerKg);
   const aCBM=mPkgs.reduce((a,p)=>a+(p.l*p.w*p.h)/1000000,0);
   const cA=+cbmUsSgOvr||aCBM;const cB=+cbmSgIdOvr||aCBM;
   const s1T=(+fee1)*cA;const s2T=(+fee2)*cB;
-  const airBreakTotal=(+fee1)*airKgQ;
   const fM=isAirM(shUsSg)&&isAirM(shSgId)?"air_air":isAirM(shUsSg)&&!isAirM(shSgId)?"air_sea":"sea_sea";
   const uR=+fxUSD||ctx.liveFx?.usd_idr||15850;const sR=+fxSGD||ctx.liveFx?.sgd_idr||11900;
   const toI=(a,c)=>c==="USD"?(+a||0)*uR:c==="SGD"?(+a||0)*sR:(+a||0);
@@ -621,7 +496,7 @@ function QuoteCalc({ctx}){
   const gIDR=(()=>{
     if(fM==="air_air")return toI(wPrice,priceCur)+toI(+feeAdd,feeAddCur);
     if(fM==="air_sea"&&airSeaOpt==="weight")return toI(wPrice,priceCur)+toI(+feeAdd,feeAddCur);
-    if(fM==="air_sea")return toI(airBreakTotal,fee1Cur)+toI(+feeClear,feeClearCur)+toI(s2T,fee2Cur)+toI(+feeAdd,feeAddCur);
+    if(fM==="air_sea")return toI(+fee1,fee1Cur)+toI(+feeClear,feeClearCur)+toI(s2T,fee2Cur)+toI(+feeAdd,feeAddCur);
     return toI(s1T,fee1Cur)+toI(+feeClear,feeClearCur)+toI(s2T,fee2Cur)+toI(+feeAdd,feeAddCur);})();
   function dlPDF(){const doc=generateQuotationPDF({customerName:custName||"Customer",packages:mPkgs,divisor:div,courierName:shUsSg,ratePerKg:+pricePerKg,priceCurrency:priceCur});doc.save(`quotation-${custName||"customer"}.pdf`);}
   const CS=({v,onChange})=>(<select style={{...S.input,width:60,padding:"7px 2px",fontSize:12}} value={v} onChange={e=>onChange(e.target.value)}><option value="USD">USD</option><option value="SGD">SGD</option><option value="IDR">IDR</option></select>);
@@ -643,34 +518,7 @@ function QuoteCalc({ctx}){
       <div style={{background:"var(--head)",border:"1px solid var(--line)",borderRadius:12,padding:16,marginBottom:12}}>
         <div style={{fontSize:12,fontWeight:700,color:"var(--ink-3)",letterSpacing:".04em",marginBottom:10,textTransform:"uppercase"}}>Pricing — {fM==="air_air"?"Air + Air":fM==="air_sea"?"Air + Sea":"Sea + Sea"}</div>
         {fM==="air_air"&&(<><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}><label style={S.field}><span style={S.fLabel}>Rate per kg</span><div style={{display:"flex",gap:4}}><input style={{...S.input,flex:1}} type="number" value={pricePerKg} onChange={e=>setPricePerKg(e.target.value)}/><CS v={priceCur} onChange={setPriceCur}/></div></label><label style={S.field}><span style={S.fLabel}>Additional cost</span><div style={{display:"flex",gap:4}}><input style={{...S.input,flex:1}} type="number" value={feeAdd} onChange={e=>setFeeAdd(e.target.value)} placeholder="0"/><CS v={feeAddCur} onChange={setFeeAddCur}/></div></label></div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginTop:8}}><label style={S.field}><span style={S.fLabel}>USD→IDR</span><input style={S.input} type="number" value={fxUSD} onChange={e=>setFxUSD(e.target.value)} placeholder={ctx.liveFx?.usd_idr||15850}/></label><label style={S.field}><span style={S.fLabel}>SGD→IDR</span><input style={S.input} type="number" value={fxSGD} onChange={e=>setFxSGD(e.target.value)} placeholder={ctx.liveFx?.sgd_idr||11900}/></label></div><div style={{background:"var(--good-bg)",borderRadius:9,padding:"10px 14px",marginTop:8}}><span style={{fontWeight:700,fontSize:14}}>Total (IDR): {fmtIDR(gIDR)}</span></div></>)}
-        {fM==="air_sea"&&(<><label style={S.field}><span style={S.fLabel}>Pricing method</span><select style={S.input} value={airSeaOpt} onChange={e=>setAirSeaOpt(e.target.value)}><option value="weight">Price per weight + Additional</option><option value="breakdown">Airfreight per-kg + Seafreight/CBM</option></select></label>{airSeaOpt==="weight"?(<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}><label style={S.field}><span style={S.fLabel}>Rate per kg</span><div style={{display:"flex",gap:4}}><input style={{...S.input,flex:1}} type="number" value={pricePerKg} onChange={e=>setPricePerKg(e.target.value)}/><CS v={priceCur} onChange={setPriceCur}/></div></label><label style={S.field}><span style={S.fLabel}>Additional cost</span><div style={{display:"flex",gap:4}}><input style={{...S.input,flex:1}} type="number" value={feeAdd} onChange={e=>setFeeAdd(e.target.value)} placeholder="0"/><CS v={feeAddCur} onChange={setFeeAddCur}/></div></label></div>):(<>
-          <div style={{fontSize:11,fontWeight:700,color:"var(--ink-3)",letterSpacing:".04em",margin:"8px 0 4px"}}>AIRFREIGHT LEG (USA→SIN)</div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-            <label style={S.field}><span style={S.fLabel}>Rate per kg (air)</span><div style={{display:"flex",gap:4}}><input style={{...S.input,flex:1}} type="number" value={fee1} onChange={e=>setFee1(e.target.value)}/><CS v={fee1Cur} onChange={setFee1Cur}/></div></label>
-            <label style={S.field}><span style={S.fLabel}>Weight basis (air)</span>
-              <select style={S.input} value={airWeightBasis} onChange={e=>setAirWeightBasis(e.target.value)}>
-                <option value="charged">Greater-of ({tCharged.toFixed(1)} kg)</option>
-                <option value="volumetric">Volumetric ({finalizeCharged(tVol).charged.toFixed(1)} kg)</option>
-                <option value="actual">Actual ({finalizeCharged(tActual).charged.toFixed(1)} kg)</option>
-              </select>
-            </label>
-          </div>
-          <div style={{background:"var(--card)",border:"1px solid var(--line)",borderRadius:8,padding:"8px 12px",fontSize:12.5,marginBottom:8}}>
-            Air: {fm(+fee1,fee1Cur)}/kg × {airKgQ.toFixed(1)} kg = {fm(airBreakTotal,fee1Cur)}
-          </div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-            <label style={S.field}><span style={S.fLabel}>Clearance fee</span><div style={{display:"flex",gap:4}}><input style={{...S.input,flex:1}} type="number" value={feeClear} onChange={e=>setFeeClear(e.target.value)}/><CS v={feeClearCur} onChange={setFeeClearCur}/></div></label>
-          </div>
-          <div style={{fontSize:11,fontWeight:700,color:"var(--ink-3)",letterSpacing:".04em",margin:"8px 0 4px"}}>SEAFREIGHT LEG (SIN→JKT)</div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-            <label style={S.field}><span style={S.fLabel}>Rate per CBM (sea)</span><div style={{display:"flex",gap:4}}><input style={{...S.input,flex:1}} type="number" value={fee2} onChange={e=>setFee2(e.target.value)}/><CS v={fee2Cur} onChange={setFee2Cur}/></div></label>
-            <label style={S.field}><span style={S.fLabel}>{`Volume CBM (auto: ${aCBM.toFixed(4)})`}</span><input style={S.input} type="number" value={cbmSgIdOvr} onChange={e=>setCbmSgIdOvr(e.target.value)} placeholder={aCBM.toFixed(4)}/></label>
-          </div>
-          <div style={{background:"var(--card)",border:"1px solid var(--line)",borderRadius:8,padding:"8px 12px",fontSize:12.5,marginBottom:8}}>
-            Air total: {fm(airBreakTotal,fee1Cur)} + Sea: {fm(+fee2,fee2Cur)}/CBM × {cB.toFixed(4)} m³ = {fm(s2T,fee2Cur)}
-          </div>
-          <label style={S.field}><span style={S.fLabel}>Additional cost</span><div style={{display:"flex",gap:4}}><input style={{...S.input,flex:1}} type="number" value={feeAdd} onChange={e=>setFeeAdd(e.target.value)}/><CS v={feeAddCur} onChange={setFeeAddCur}/></div></label>
-        </>)}<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginTop:8}}><label style={S.field}><span style={S.fLabel}>USD→IDR</span><input style={S.input} type="number" value={fxUSD} onChange={e=>setFxUSD(e.target.value)} placeholder={ctx.liveFx?.usd_idr||15850}/></label><label style={S.field}><span style={S.fLabel}>SGD→IDR</span><input style={S.input} type="number" value={fxSGD} onChange={e=>setFxSGD(e.target.value)} placeholder={ctx.liveFx?.sgd_idr||11900}/></label></div><div style={{background:"var(--good-bg)",borderRadius:9,padding:"10px 14px",marginTop:6}}><span style={{fontWeight:700,fontSize:14}}>Total (IDR): {fmtIDR(gIDR)}</span></div></>)}
+        {fM==="air_sea"&&(<><label style={S.field}><span style={S.fLabel}>Pricing method</span><select style={S.input} value={airSeaOpt} onChange={e=>setAirSeaOpt(e.target.value)}><option value="weight">Price per weight + Additional</option><option value="breakdown">Airfreight + Clearance + Seafreight/CBM + Additional</option></select></label>{airSeaOpt==="weight"?(<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}><label style={S.field}><span style={S.fLabel}>Rate per kg</span><div style={{display:"flex",gap:4}}><input style={{...S.input,flex:1}} type="number" value={pricePerKg} onChange={e=>setPricePerKg(e.target.value)}/><CS v={priceCur} onChange={setPriceCur}/></div></label><label style={S.field}><span style={S.fLabel}>Additional cost</span><div style={{display:"flex",gap:4}}><input style={{...S.input,flex:1}} type="number" value={feeAdd} onChange={e=>setFeeAdd(e.target.value)} placeholder="0"/><CS v={feeAddCur} onChange={setFeeAddCur}/></div></label></div>):(<><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}><label style={S.field}><span style={S.fLabel}>Airfreight fee</span><div style={{display:"flex",gap:4}}><input style={{...S.input,flex:1}} type="number" value={fee1} onChange={e=>setFee1(e.target.value)}/><CS v={fee1Cur} onChange={setFee1Cur}/></div></label><label style={S.field}><span style={S.fLabel}>Clearance fee</span><div style={{display:"flex",gap:4}}><input style={{...S.input,flex:1}} type="number" value={feeClear} onChange={e=>setFeeClear(e.target.value)}/><CS v={feeClearCur} onChange={setFeeClearCur}/></div></label></div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}><label style={S.field}><span style={S.fLabel}>SF rate/CBM (SIN→JKT)</span><div style={{display:"flex",gap:4}}><input style={{...S.input,flex:1}} type="number" value={fee2} onChange={e=>setFee2(e.target.value)}/><CS v={fee2Cur} onChange={setFee2Cur}/></div></label><label style={S.field}><span style={S.fLabel}>Additional cost</span><div style={{display:"flex",gap:4}}><input style={{...S.input,flex:1}} type="number" value={feeAdd} onChange={e=>setFeeAdd(e.target.value)}/><CS v={feeAddCur} onChange={setFeeAddCur}/></div></label></div><label style={S.field}><span style={S.fLabel}>{`CBM SIN→JKT (auto: ${aCBM.toFixed(3)})`}</span><input style={{...S.input,maxWidth:200}} type="number" value={cbmSgIdOvr} onChange={e=>setCbmSgIdOvr(e.target.value)} placeholder={aCBM.toFixed(3)}/></label></>)}<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginTop:8}}><label style={S.field}><span style={S.fLabel}>USD→IDR</span><input style={S.input} type="number" value={fxUSD} onChange={e=>setFxUSD(e.target.value)} placeholder={ctx.liveFx?.usd_idr||15850}/></label><label style={S.field}><span style={S.fLabel}>SGD→IDR</span><input style={S.input} type="number" value={fxSGD} onChange={e=>setFxSGD(e.target.value)} placeholder={ctx.liveFx?.sgd_idr||11900}/></label></div><div style={{background:"var(--good-bg)",borderRadius:9,padding:"10px 14px",marginTop:6}}><span style={{fontWeight:700,fontSize:14}}>Total (IDR): {fmtIDR(gIDR)}</span></div></>)}
         {fM==="sea_sea"&&(<><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}><label style={S.field}><span style={S.fLabel}>SF1 rate/CBM (USA→SIN)</span><div style={{display:"flex",gap:4}}><input style={{...S.input,flex:1}} type="number" value={fee1} onChange={e=>setFee1(e.target.value)}/><CS v={fee1Cur} onChange={setFee1Cur}/></div></label><label style={S.field}><span style={S.fLabel}>Clearance fee</span><div style={{display:"flex",gap:4}}><input style={{...S.input,flex:1}} type="number" value={feeClear} onChange={e=>setFeeClear(e.target.value)}/><CS v={feeClearCur} onChange={setFeeClearCur}/></div></label></div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}><label style={S.field}><span style={S.fLabel}>SF2 rate/CBM (SIN→JKT)</span><div style={{display:"flex",gap:4}}><input style={{...S.input,flex:1}} type="number" value={fee2} onChange={e=>setFee2(e.target.value)}/><CS v={fee2Cur} onChange={setFee2Cur}/></div></label><label style={S.field}><span style={S.fLabel}>Additional cost</span><div style={{display:"flex",gap:4}}><input style={{...S.input,flex:1}} type="number" value={feeAdd} onChange={e=>setFeeAdd(e.target.value)}/><CS v={feeAddCur} onChange={setFeeAddCur}/></div></label></div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}><label style={S.field}><span style={S.fLabel}>USD→IDR</span><input style={S.input} type="number" value={fxUSD} onChange={e=>setFxUSD(e.target.value)} placeholder={ctx.liveFx?.usd_idr||15850}/></label><label style={S.field}><span style={S.fLabel}>SGD→IDR</span><input style={S.input} type="number" value={fxSGD} onChange={e=>setFxSGD(e.target.value)} placeholder={ctx.liveFx?.sgd_idr||11900}/></label></div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}><label style={S.field}><span style={S.fLabel}>{`CBM USA→SIN (auto: ${aCBM.toFixed(3)})`}</span><input style={S.input} type="number" value={cbmUsSgOvr} onChange={e=>setCbmUsSgOvr(e.target.value)} placeholder={aCBM.toFixed(3)}/></label><label style={S.field}><span style={S.fLabel}>{`CBM SIN→JKT (auto: ${aCBM.toFixed(3)})`}</span><input style={S.input} type="number" value={cbmSgIdOvr} onChange={e=>setCbmSgIdOvr(e.target.value)} placeholder={aCBM.toFixed(3)}/></label></div><div style={{display:"flex",flexWrap:"wrap",gap:"6px 14px",background:"var(--card)",border:"1px solid var(--line)",borderRadius:9,padding:"10px 14px",fontSize:12.5,marginTop:6}}><span>SF1:{fm(+fee1,fee1Cur)}/CBM×{cA.toFixed(2)}={fm(s1T,fee1Cur)}</span><span>Clear:{fm(+feeClear,feeClearCur)}</span><span>SF2:{fm(+fee2,fee2Cur)}/CBM×{cB.toFixed(2)}={fm(s2T,fee2Cur)}</span><span>Add:{fm(+feeAdd,feeAddCur)}</span></div><div style={{background:"var(--good-bg)",borderRadius:9,padding:"10px 14px",marginTop:4}}><span style={{fontWeight:700,fontSize:14}}>Total (IDR): {fmtIDR(gIDR)}</span></div></>)}
       </div>
       <div style={{display:"flex",justifyContent:"flex-end"}}><button style={S.printBtn} onClick={dlPDF}><Download size={13}/> Download PDF</button></div>
@@ -678,98 +526,23 @@ function QuoteCalc({ctx}){
 }
 function RateCards({ctx,reload}){
   const {D}=ctx;
-  const [draft,setDraft]=useState(()=>Object.fromEntries(D.customers.map(c=>[c.id,{rate:c.rate_per_kg,cur:c.rate_currency||"IDR"}])));
+  const [draft,setDraft]=useState(()=>Object.fromEntries(D.customers.map(c=>[c.id,c.rate_per_kg])));
   const [saving,setSaving]=useState(null);
-  const [q,setQ]=useState("");
-  const SHOW=6;
-  const [showAll,setShowAll]=useState(false);
-
-  const filtered=useMemo(()=>
-    D.customers.filter(c=>c.name.toLowerCase().includes(q.toLowerCase()))
-  ,[q,D.customers]);
-  const visible=showAll||q?filtered:filtered.slice(0,SHOW);
-  const hasMore=!q&&!showAll&&filtered.length>SHOW;
-
-  const save=async(id)=>{
-    setSaving(id);
-    const patch={rate_per_kg:Number(draft[id].rate),rate_currency:draft[id].cur};
-    await updateCustomer(id,patch);
-    ctx.patchCustomer&&ctx.patchCustomer(id,patch);
-    setSaving(null);
-  };
-
-  const fmtRate=(c)=>{
-    const cur=draft[c.id]?.cur||c.rate_currency||"IDR";
-    const rate=c.rate_per_kg||0;
-    if(cur==="USD") return `$${Number(rate).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}`;
-    if(cur==="SGD") return `S$${Number(rate).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}`;
-    return fmtIDR(rate);
-  };
-
+  const save=async(id)=>{setSaving(id);await updateCustomerRate(id,Number(draft[id]));setSaving(null);reload();};
   return(
     <div style={{...S.card,marginBottom:18}}>
-      <div style={S.cardTitle}><Tag size={15}/> Customer rates <span style={S.muted}>· rate per chargeable kg</span></div>
-      {/* Search bar */}
-      <div style={{display:"flex",alignItems:"center",gap:8,padding:"10px 16px",borderBottom:"1px solid var(--line)"}}>
-        <Search size={14} style={{color:"var(--ink-3)",flexShrink:0}}/>
-        <input
-          style={{...S.input,margin:0,flex:1}}
-          placeholder={`Search ${D.customers.length} customers…`}
-          value={q} onChange={e=>{setQ(e.target.value);setShowAll(true);}}
-        />
-        {q && <button onClick={()=>{setQ("");setShowAll(false);}} style={{background:"transparent",border:"none",cursor:"pointer",color:"var(--ink-3)",padding:2}}><X size={14}/></button>}
-      </div>
-      <div style={S.tHead}>
-        <span style={{flex:2}}>Customer</span>
-        <span style={{flex:1.8,textAlign:"right"}}>Rate / kg</span>
-        <span style={{flex:0.7,textAlign:"right"}}>Currency</span>
-        <span style={{flex:1}}></span>
-      </div>
-      {visible.map(c=>{
-        const d=draft[c.id]||{rate:c.rate_per_kg,cur:c.rate_currency||"IDR"};
-        const changed=Number(d.rate)!==Number(c.rate_per_kg)||d.cur!==(c.rate_currency||"IDR");
-        const sym=d.cur==="USD"?"$":d.cur==="SGD"?"S$":"Rp";
-        return(
-          <div key={c.id} style={S.row2}>
-            <span style={{flex:2,fontWeight:600}}>{c.name}</span>
-            <span style={{flex:1.8,display:"flex",justifyContent:"flex-end",alignItems:"center",gap:4}}>
-              <span style={{fontSize:12,color:"var(--ink-3)"}}>{sym}</span>
-              <input type="number" value={d.rate}
-                onChange={e=>setDraft({...draft,[c.id]:{...d,rate:e.target.value}})}
-                style={{...S.input,maxWidth:130,textAlign:"right",margin:0}}/>
-            </span>
-            <span style={{flex:0.7,display:"flex",justifyContent:"flex-end"}}>
-              <select value={d.cur}
-                onChange={e=>setDraft({...draft,[c.id]:{...d,cur:e.target.value}})}
-                style={{...S.input,width:60,padding:"7px 4px",fontSize:12,margin:0}}>
-                <option value="IDR">IDR</option>
-                <option value="USD">USD</option>
-                <option value="SGD">SGD</option>
-              </select>
-            </span>
-            <span style={{flex:1,display:"flex",justifyContent:"flex-end"}}>
-              {changed && <button style={S.saveBtn} onClick={()=>save(c.id)} disabled={saving===c.id}>{saving===c.id?"Saving…":"Save"}</button>}
-            </span>
-          </div>
-        );
-      })}
-      {hasMore && (
-        <div style={{textAlign:"center",padding:"10px 0",borderTop:"1px solid var(--line)"}}>
-          <button onClick={()=>setShowAll(true)}
-            style={{background:"transparent",border:"none",color:"var(--navy)",fontWeight:600,cursor:"pointer",fontSize:13}}>
-            Show all {filtered.length} customers ↓
-          </button>
-        </div>
-      )}
-      {showAll&&!q&&filtered.length>SHOW&&(
-        <div style={{textAlign:"center",padding:"10px 0",borderTop:"1px solid var(--line)"}}>
-          <button onClick={()=>setShowAll(false)}
-            style={{background:"transparent",border:"none",color:"var(--ink-3)",fontWeight:600,cursor:"pointer",fontSize:13}}>
-            Show less ↑
-          </button>
-        </div>
-      )}
-      {filtered.length===0&&<div style={S.empty}>No customers match "{q}"</div>}
+      <div style={S.cardTitle}><Tag size={15}/> Customer rates <span style={S.muted}>· IDR per chargeable kg</span></div>
+      <div style={S.tHead}><span style={{flex:2}}>Customer</span><span style={{flex:1.6,textAlign:"right"}}>Rate / kg (IDR)</span><span style={{flex:1}}></span></div>
+      {D.customers.map(c=>{const changed=Number(draft[c.id])!==Number(c.rate_per_kg);return(
+        <div key={c.id} style={S.row2}>
+          <span style={{flex:2,fontWeight:600}}>{c.name}</span>
+          <span style={{flex:1.6,display:"flex",justifyContent:"flex-end"}}>
+            <input type="number" value={draft[c.id]} onChange={e=>setDraft({...draft,[c.id]:e.target.value})}
+              style={{...S.input,maxWidth:150,textAlign:"right"}}/></span>
+          <span style={{flex:1,display:"flex",justifyContent:"flex-end"}}>
+            {changed && <button style={S.saveBtn} onClick={()=>save(c.id)} disabled={saving===c.id}>{saving===c.id?"Saving…":"Save"}</button>}
+          </span>
+        </div>);})}
     </div>);
 }
 
@@ -791,112 +564,47 @@ function CourierTable({couriers}){
 function Invoices({ctx}){
   const {D,custName,shipmentOf,reload,patchOrder}=ctx;
   const [q,setQ]=useState("");
-  const [filterCustomer,setFilterCustomer]=useState("");
-  const [filterPayment,setFilterPayment]=useState("");
-  const [filterStatus,setFilterStatus]=useState(""); // "pending"|"done"|""
-  const [filterStage,setFilterStage]=useState("");
-  const [filterDateFrom,setFilterDateFrom]=useState("");
-  const [filterDateTo,setFilterDateTo]=useState("");
-  const [showFilters,setShowFilters]=useState(false);
-
-  const active=D.orders.filter(o=>!o.completed);
-
-  const filtered=active.filter(o=>{
-    const s=shipmentOf(o.shipment_id);
-    if(q && ![o.id,custName(o.customer_id),o.product,o.shipment_id].join(" ").toLowerCase().includes(q.toLowerCase())) return false;
-    if(filterCustomer && o.customer_id!==filterCustomer) return false;
-    if(filterPayment && (s?.payment??"Unpaid")!==filterPayment) return false;
-    if(filterStatus==="pending" && o.invoice_done) return false;
-    if(filterStatus==="done" && !o.invoice_done) return false;
-    if(filterStage && s?.stage!==filterStage) return false;
-    if(filterDateFrom && o.order_date && o.order_date<filterDateFrom) return false;
-    if(filterDateTo && o.order_date && o.order_date>filterDateTo) return false;
-    return true;
-  });
-
-  const activeFilters=[filterCustomer,filterPayment,filterStatus,filterStage,filterDateFrom,filterDateTo].filter(Boolean).length;
-  function clearFilters(){setFilterCustomer("");setFilterPayment("");setFilterStatus("");setFilterStage("");setFilterDateFrom("");setFilterDateTo("");}
-
+  const delivered=D.orders.filter(o=>shipmentOf(o.shipment_id)?.stage==="Delivered to customer");
+  // Invoices tab: delivered, not yet invoiced, not completed
+  const active=delivered.filter(o=>!o.invoiced&&!o.completed);
+  const filtered=active.filter(o=>[o.id,custName(o.customer_id),o.product].join(" ").toLowerCase().includes(q.toLowerCase()));
   const [openId,setOpen]=useState(null);
+
+  async function handleMarkInvoiced(orderId, patch){
+    await markAsInvoiced(orderId, patch);
+    setOpen(null);
+    reload();
+  }
 
   return(<>
     <div style={S.sectionLead}><h2 style={S.h2}>Invoices</h2>
-      <p style={S.lead}>Review pricing, add invoice-level costs, set conversion rates, then click <b>"Mark Invoice Done"</b>. Once Shipment, Invoice and Cost are all done the order can be completed.</p></div>
-
-    {/* Search + filter bar */}
-    <div style={{display:"flex",gap:8,marginBottom:8,flexWrap:"wrap",alignItems:"center"}}>
-      <div style={{...S.searchWrap,flex:1,minWidth:200,marginBottom:0}}><Search size={15} style={{opacity:.5}}/><input style={S.search} placeholder="Search orders…" value={q} onChange={e=>setQ(e.target.value)}/></div>
-      <button onClick={()=>setShowFilters(v=>!v)} style={{...S.secBtn,position:"relative"}}>
-        <Filter size={13}/> Filters {activeFilters>0&&<span style={{marginLeft:4,background:"var(--navy)",color:"#fff",borderRadius:10,fontSize:10,padding:"1px 6px",fontWeight:700}}>{activeFilters}</span>}
-      </button>
-      {activeFilters>0&&<button onClick={clearFilters} style={{...S.secBtn,color:"var(--bad)",borderColor:"var(--bad)",fontSize:12}}>✕ Clear</button>}
-      <span style={{fontSize:13,color:"var(--ink-3)",marginLeft:"auto"}}>{filtered.length} of {active.length} · {active.filter(o=>!o.invoice_done).length} pending</span>
+      <p style={S.lead}>Delivered orders ready to invoice. Review pricing, add invoice-level costs, set conversion rates, then click <b>"Mark as Invoiced"</b> to move to the Costs tab for final profit calculation.</p></div>
+    <div style={{display:"flex",gap:10,marginBottom:14,flexWrap:"wrap",alignItems:"center"}}>
+      <div style={{...S.searchWrap,flex:1,maxWidth:320,marginBottom:0}}><Search size={15} style={{opacity:.5}}/><input style={S.search} placeholder="Search invoices…" value={q} onChange={e=>setQ(e.target.value)}/></div>
+      <span style={{fontSize:13,color:"var(--ink-3)"}}>{active.length} pending</span>
     </div>
-
-    {showFilters&&(
-      <div style={{background:"var(--head)",border:"1px solid var(--line)",borderRadius:10,padding:"14px 16px",marginBottom:12,display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:10}}>
-        <label style={S.field}><span style={S.fLabel}>Customer</span>
-          <select style={S.input} value={filterCustomer} onChange={e=>setFilterCustomer(e.target.value)}>
-            <option value="">All customers</option>
-            {[...new Set(active.map(o=>o.customer_id))].map(id=><option key={id} value={id}>{custName(id)}</option>)}
-          </select>
-        </label>
-        <label style={S.field}><span style={S.fLabel}>Invoice status</span>
-          <select style={S.input} value={filterStatus} onChange={e=>setFilterStatus(e.target.value)}>
-            <option value="">All</option>
-            <option value="pending">Pending</option>
-            <option value="done">Done</option>
-          </select>
-        </label>
-        <label style={S.field}><span style={S.fLabel}>Payment</span>
-          <select style={S.input} value={filterPayment} onChange={e=>setFilterPayment(e.target.value)}>
-            <option value="">All</option>
-            {["Unpaid","Invoiced","Paid"].map(p=><option key={p} value={p}>{p}</option>)}
-          </select>
-        </label>
-        <label style={S.field}><span style={S.fLabel}>Shipment stage</span>
-          <select style={S.input} value={filterStage} onChange={e=>setFilterStage(e.target.value)}>
-            <option value="">All stages</option>
-            {STAGES.map(st=><option key={st} value={st}>{st}</option>)}
-          </select>
-        </label>
-        <label style={S.field}><span style={S.fLabel}>Order date from</span>
-          <input style={S.input} type="date" value={filterDateFrom} onChange={e=>setFilterDateFrom(e.target.value)}/>
-        </label>
-        <label style={S.field}><span style={S.fLabel}>Order date to</span>
-          <input style={S.input} type="date" value={filterDateTo} onChange={e=>setFilterDateTo(e.target.value)}/>
-        </label>
-      </div>
-    )}
-
-    {filtered.length===0 && <div style={S.empty}>No orders match the current filters.</div>}
+    {filtered.length===0 && <div style={S.empty}>No active invoices — all delivered orders have been invoiced.</div>}
     <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:14}}>
-      {filtered.map(o=>{const s=shipmentOf(o.shipment_id); const isOpen=openId===o.id; return(
-        <div key={o.id} style={{borderRadius:12,border:isOpen?"2px solid var(--navy)":"1px solid var(--line)",overflow:"hidden"}}>
-          <button onClick={()=>setOpen(isOpen?null:o.id)}
-            style={{...S.shipCard,padding:"12px 16px",display:"flex",flexDirection:"column",justifyContent:"center",gap:6,cursor:"pointer",
-              width:"100%",background:isOpen?"var(--head)":"var(--card)",opacity:o.invoice_done?.8:1,border:"none",borderRadius:0}}>
-            <div style={{display:"flex",alignItems:"center",gap:10}}>
-              <FileText size={15} style={{color:o.invoice_done?"var(--good)":"var(--navy)",flexShrink:0}}/>
-              <span style={{fontFamily:"var(--mono)",fontWeight:700,fontSize:13,flexShrink:0}}>{o.id}</span>
-              <span style={{fontWeight:600,flexShrink:0}}>{custName(o.customer_id)}</span>
-              {o.product&&<span style={{fontSize:12.5,color:"var(--ink-3)"}}>{o.product}</span>}
-              {o.invoice_done&&<span style={{fontSize:11,background:"var(--good-bg)",color:"var(--good)",borderRadius:5,padding:"1px 7px",fontWeight:700,flexShrink:0}}>✓ Done</span>}
-              <span style={{flex:1}}/>
-              <span className={"paybadge pay-"+(s?.payment??"Unpaid")} style={{flexShrink:0,width:80,textAlign:"center"}}>{s?.payment??"Unpaid"}</span>
-              <span style={{fontFamily:"var(--display)",fontWeight:700,fontSize:14,flexShrink:0,width:140,textAlign:"right"}}>{fmtIDR(Number(o.sell_idr||0))}</span>
-              <ChevronRight size={14} style={{color:"var(--ink-3)",transform:isOpen?"rotate(90deg)":"none",transition:".15s",flexShrink:0}}/>
-            </div>
-            <TabStatusBar order={o}/>
-          </button>
-          {isOpen && <div style={{borderTop:"2px solid var(--navy)"}}><InvoiceDoc ctx={ctx} order={o} onClose={()=>setOpen(null)} reload={reload}/></div>}
-        </div>
+      {filtered.map(o=>{const s=shipmentOf(o.shipment_id);return(
+        <button key={o.id} onClick={()=>setOpen(openId===o.id?null:o.id)} style={{...S.shipCard,padding:"12px 16px",display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer",border:openId===o.id?"2px solid var(--navy)":"1px solid var(--line)",background:openId===o.id?"var(--head)":"var(--card)"}}>
+          <div style={{display:"flex",alignItems:"center",gap:10}}>
+            <FileText size={15} style={{color:"var(--navy)"}}/>
+            <span style={{fontFamily:"var(--mono)",fontWeight:700,fontSize:13}}>{o.id}</span>
+            <span style={{fontWeight:600}}>{custName(o.customer_id)}</span>
+            <span style={{fontSize:12.5,color:"var(--ink-3)"}}>{o.product}</span>
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:8}}>
+            <span className={"paybadge pay-"+(s?.payment??"Unpaid")}>{s?.payment??"Unpaid"}</span>
+            <span style={{fontFamily:"var(--display)",fontWeight:700,fontSize:14}}>{fmtIDR(Number(o.sell_idr||0))}</span>
+          </div>
+        </button>
       );})}
     </div>
+    {openId && <InvoiceDoc ctx={ctx} order={filtered.find(o=>o.id===openId)} onComplete={handleMarkInvoiced} reload={reload}/>}
   </>);
 }
 
-function InvoiceDoc({ctx,order,onClose,reload}){
+function InvoiceDoc({ctx,order,onComplete,reload}){
   const {D,custName,courierOf,shipmentOf,quote,patchOrder}=ctx;
   const q=quote(order);const s=shipmentOf(order.shipment_id);const c=courierOf(s?.courier_id);
   const invNo="INV-"+order.id.replace("ORD-","");
@@ -906,7 +614,6 @@ function InvoiceDoc({ctx,order,onClose,reload}){
   const [sgdRate,setSgdRate]=useState(order.invoice_sgd_rate || "");
   const [newCostLabel,setNewCostLabel]=useState("");
   const [newCostAmt,setNewCostAmt]=useState("");
-  const [newCostQty,setNewCostQty]=useState("1");
   const [newCostCur,setNewCostCur]=useState("IDR");
   const [saving,setSaving]=useState(false);
 
@@ -919,9 +626,7 @@ function InvoiceDoc({ctx,order,onClose,reload}){
   const extraFeesIDR = (order.order_extra_fees||[]).reduce((a,ef)=>{
     const qty=+ef.qty||1; return a+toIDR((+ef.amount||0)*qty, ef.currency||"USD");
   }, 0);
-  const invoiceFeesIDR = (order.extra_costs||[]).reduce((a,ec)=>{
-    const qty=+ec.qty||1; return a+toIDR((+ec.amount||0)*qty, ec.currency||"IDR");
-  }, 0);
+  const invoiceFeesIDR = (order.extra_costs||[]).reduce((a,ec)=>a+toIDR(+ec.amount||0, ec.currency||"IDR"), 0);
   const grandTotalIDR = q.feeLines.reduce((a,l)=>a+toIDR(l.amount,l.currency), 0) + extraFeesIDR + invoiceFeesIDR;
 
   async function saveRates(){
@@ -934,21 +639,18 @@ function InvoiceDoc({ctx,order,onClose,reload}){
 
   async function addCost(){
     if(!newCostLabel.trim()||!newCostAmt) return;
-    const qty=Math.max(1,+newCostQty||1);
-    const entry={label:newCostLabel.trim(),amount:+newCostAmt,qty,currency:newCostCur};
-    const extra=[...(order.extra_costs||[]),entry];
-    const patch={extra_costs:extra,sell_idr:Math.round(grandTotalIDR+toIDR((+newCostAmt)*qty,newCostCur))};
+    const extra=[...(order.extra_costs||[]),{label:newCostLabel.trim(),amount:+newCostAmt,currency:newCostCur}];
+    const patch={extra_costs:extra,sell_idr:Math.round(grandTotalIDR+toIDR(+newCostAmt,newCostCur))};
     const {error}=await updateOrder(order.id,patch);
     if(!error){
-      setNewCostLabel("");setNewCostAmt("");setNewCostQty("1");
+      setNewCostLabel("");setNewCostAmt("");
       patchOrder?patchOrder(order.id,patch):reload&&reload();
     }
   }
   async function removeCost(idx){
     const extra=(order.extra_costs||[]).filter((_,i)=>i!==idx);
     const removed=(order.extra_costs||[])[idx];
-    const removedQty=+removed.qty||1;
-    const newTotal=grandTotalIDR-toIDR((+removed.amount||0)*removedQty,removed.currency);
+    const newTotal=grandTotalIDR-toIDR(removed.amount,removed.currency);
     const patch={extra_costs:extra,sell_idr:Math.round(newTotal)};
     const {error}=await updateOrder(order.id,patch);
     if(!error) patchOrder?patchOrder(order.id,patch):reload&&reload();
@@ -977,7 +679,7 @@ function InvoiceDoc({ctx,order,onClose,reload}){
       <div style={S.invTableHead}><span style={{flex:3}}>Description</span><span style={{flex:1,textAlign:"right"}}>Amount</span><span style={{flex:1,textAlign:"right"}}>In IDR</span><span style={{width:28}}/></div>
       {q.feeLines.length===0 && <div style={{padding:"12px 0",fontSize:13,color:"var(--ink-3)"}}>No fee lines recorded for this order.</div>}
       {/* Main fees (weight/seafreight/airfreight) — not deletable from invoice */}
-      {q.feeLines.filter(l=>!l._fromOrderExtra && !l._fromInvoiceExtra).map((l,i)=>(
+      {q.feeLines.map((l,i)=>(
         <div key={i} style={S.invLine}>
           <span style={{flex:3}}>{l.label}</span>
           <span style={{flex:1,textAlign:"right"}}>{fmtOrig(l.amount,l.currency)}</span>
@@ -1008,34 +710,27 @@ function InvoiceDoc({ctx,order,onClose,reload}){
         );
       })}
       {/* Invoice-tab extra costs — deletable (existing behaviour) */}
-      {(order.extra_costs||[]).map((ec,i)=>{
-        const qty=+ec.qty||1; const total=(+ec.amount||0)*qty;
-        const label=qty>1?`${ec.label} ×${qty}`:ec.label;
-        return(
-          <div key={"ec-"+i} style={S.invLine}>
-            <span style={{flex:3,display:"flex",alignItems:"center",gap:6}}>
-              <span style={{fontSize:10,background:"var(--navy)",color:"#fff",borderRadius:4,padding:"1px 5px",fontWeight:700,letterSpacing:".04em"}}>INVOICE</span>
-              {label}
-            </span>
-            <span style={{flex:1,textAlign:"right"}}>{fmtOrig(total,ec.currency)}</span>
-            <span style={{flex:1,textAlign:"right",fontWeight:600}}>{fmtIDR(toIDR(total,ec.currency))}</span>
-            <button onClick={()=>removeCost(i)} style={{width:28,background:"transparent",border:"none",color:"var(--bad)",cursor:"pointer",padding:2,flexShrink:0}}><Trash2 size={13}/></button>
-          </div>
-        );
-      })}
+      {(order.extra_costs||[]).map((ec,i)=>(
+        <div key={"ec-"+i} style={S.invLine}>
+          <span style={{flex:3,display:"flex",alignItems:"center",gap:6}}>
+            <span style={{fontSize:10,background:"var(--navy)",color:"#fff",borderRadius:4,padding:"1px 5px",fontWeight:700,letterSpacing:".04em"}}>INVOICE</span>
+            {ec.label}
+          </span>
+          <span style={{flex:1,textAlign:"right"}}>{fmtOrig(ec.amount,ec.currency)}</span>
+          <span style={{flex:1,textAlign:"right",fontWeight:600}}>{fmtIDR(toIDR(ec.amount,ec.currency))}</span>
+          <button onClick={()=>removeCost(i)} style={{width:28,background:"transparent",border:"none",color:"var(--bad)",cursor:"pointer",padding:2,flexShrink:0}}><Trash2 size={13}/></button>
+        </div>
+      ))}
 
       {/* Add invoice-level cost line */}
       <div style={S.addCostBox}>
         <div style={{fontSize:12,fontWeight:700,color:"var(--ink-3)",letterSpacing:".04em",marginBottom:8}}>ADD COST LINE</div>
-        <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
           <input style={{...S.input,flex:2,minWidth:140}} placeholder="Description (e.g. Handling fee)" value={newCostLabel} onChange={e=>setNewCostLabel(e.target.value)}/>
-          <input style={{...S.input,width:70}} type="number" min="1" placeholder="Qty" value={newCostQty} onChange={e=>setNewCostQty(e.target.value)} title="Quantity / multiplier"/>
-          <span style={{fontSize:12,color:"var(--ink-3)",flexShrink:0}}>×</span>
-          <input style={{...S.input,width:110}} type="number" placeholder="Unit amount" value={newCostAmt} onChange={e=>setNewCostAmt(e.target.value)}/>
+          <input style={{...S.input,width:110}} type="number" placeholder="Amount" value={newCostAmt} onChange={e=>setNewCostAmt(e.target.value)}/>
           <select style={{...S.input,width:80}} value={newCostCur} onChange={e=>setNewCostCur(e.target.value)}>
             <option value="IDR">IDR</option><option value="USD">USD</option><option value="SGD">SGD</option>
           </select>
-          {newCostAmt&&+newCostQty>1&&<span style={{fontSize:12,color:"var(--navy)",fontWeight:600,flexShrink:0}}>= {fmtOrig((+newCostAmt)*(+newCostQty||1),newCostCur)}</span>}
           <button style={S.printBtn} onClick={addCost}><Plus size={13}/> Add cost</button>
         </div>
       </div>
@@ -1060,26 +755,15 @@ function InvoiceDoc({ctx,order,onClose,reload}){
 
       <div style={S.invTotal}><span>Total due</span><span style={{fontFamily:"var(--display)",fontSize:22,fontWeight:800,color:"var(--navy)"}}>{fmtIDR(grandTotalIDR)}</span></div>
       <div style={S.invFoot}><span>Payment in IDR within 14 days · Bank transfer to JEI account</span>
-        <div style={{display:"flex",gap:8,alignItems:"center"}}>
-          <TabStatusBar order={order}/>
+        <div style={{display:"flex",gap:8}}>
           <button style={S.printBtn} onClick={downloadPDF}><Download size={13}/> Download PDF</button>
-          {!order.invoice_done && !order.completed && (
-            <button style={{...S.printBtn,background:"var(--warn)",color:"#fff"}} onClick={async()=>{
-              const patch={invoice_usd_rate:+usdRate||null,invoice_sgd_rate:+sgdRate||null,sell_idr:Math.round(grandTotalIDR),invoice_done:true,invoiced:true,invoiced_at:new Date().toISOString()};
-              await updateOrder(order.id,patch);
-              patchOrder&&patchOrder(order.id,patch);
-            }}><Check size={13}/> Mark Invoice Done</button>
-          )}
-          {order.invoice_done && !order.completed && (
-            <button style={{...S.secBtn,color:"var(--ink-3)",fontSize:12}} onClick={async()=>{
-              const patch={invoice_done:false,invoiced:false,invoiced_at:null};
-              await updateOrder(order.id,patch);
-              patchOrder&&patchOrder(order.id,patch);
-            }}>↩ Undo</button>
-          )}
-        </div>
-      </div>
-      <CompleteAllButton order={order} ctx={ctx} onDone={onClose}/>
+          {!order.invoiced && !order.completed && onComplete && <button style={{...S.printBtn,background:"var(--warn)",color:"#fff"}} onClick={async()=>{
+            // Save current rates + total before marking invoiced
+            const patch={invoice_usd_rate:+usdRate||null,invoice_sgd_rate:+sgdRate||null,sell_idr:Math.round(grandTotalIDR)};
+            await updateOrder(order.id,patch);
+            onComplete(order.id, patch);
+          }}><Check size={13}/> Mark as Invoiced</button>}
+        </div></div>
     </div>);
 }
 
@@ -1089,116 +773,47 @@ function Costs({ctx}){
   const {D,custName,shipmentOf,courierOf,quote,reload,patchOrder}=ctx;
   const [q,setQ]=useState("");
   const [openId,setOpenId]=useState(null);
-  const [filterCustomer,setFilterCustomer]=useState("");
-  const [filterPayment,setFilterPayment]=useState("");
-  const [filterStatus,setFilterStatus]=useState("");
-  const [filterStage,setFilterStage]=useState("");
-  const [filterDateFrom,setFilterDateFrom]=useState("");
-  const [filterDateTo,setFilterDateTo]=useState("");
-  const [showFilters,setShowFilters]=useState(false);
 
-  const active=D.orders.filter(o=>!o.completed);
-
-  const filtered=active.filter(o=>{
-    const s=shipmentOf(o.shipment_id);
-    if(q && ![o.id,custName(o.customer_id),o.product,o.shipment_id].join(" ").toLowerCase().includes(q.toLowerCase())) return false;
-    if(filterCustomer && o.customer_id!==filterCustomer) return false;
-    if(filterPayment && (s?.payment??"Unpaid")!==filterPayment) return false;
-    if(filterStatus==="pending" && o.cost_done) return false;
-    if(filterStatus==="done" && !o.cost_done) return false;
-    if(filterStage && s?.stage!==filterStage) return false;
-    if(filterDateFrom && o.order_date && o.order_date<filterDateFrom) return false;
-    if(filterDateTo && o.order_date && o.order_date>filterDateTo) return false;
-    return true;
-  });
-
-  const activeFilters=[filterCustomer,filterPayment,filterStatus,filterStage,filterDateFrom,filterDateTo].filter(Boolean).length;
-  function clearFilters(){setFilterCustomer("");setFilterPayment("");setFilterStatus("");setFilterStage("");setFilterDateFrom("");setFilterDateTo("");}
+  // Invoiced orders waiting for cost review before completing
+  const invoiced=D.orders.filter(o=>o.invoiced&&!o.completed);
+  const filtered=invoiced.filter(o=>[o.id,custName(o.customer_id),o.product,o.shipment_id].join(" ").toLowerCase().includes(q.toLowerCase()));
 
   return(<>
     <div style={S.sectionLead}>
       <h2 style={S.h2}>Costs</h2>
-      <p style={S.lead}>Add operational costs for each order, review net profit — then click <b>"Mark Cost Done"</b>. Once Shipment, Invoice and Cost are all done the order can be completed.</p>
+      <p style={S.lead}>Orders move here after invoicing. Add operational costs, set conversion rates, review net profit — then click <b>"Complete"</b> to archive.</p>
     </div>
     <section style={S.kpis}>
-      <Kpi label="Pending" value={active.filter(o=>!o.cost_done).length} sub="awaiting cost entry"/>
-      <Kpi label="Cost done" value={active.filter(o=>o.cost_done).length} sub="waiting on other tabs"/>
+      <Kpi label="Pending" value={invoiced.length} sub="awaiting cost review"/>
+      <Kpi label="Showing" value={filtered.length} sub="after search"/>
     </section>
-
-    {/* Search + filter bar */}
-    <div style={{display:"flex",gap:8,marginBottom:8,flexWrap:"wrap",alignItems:"center"}}>
-      <div style={{...S.searchWrap,flex:1,minWidth:200,marginBottom:0}}><Search size={15} style={{opacity:.5}}/><input style={S.search} placeholder="Search orders…" value={q} onChange={e=>setQ(e.target.value)}/></div>
-      <button onClick={()=>setShowFilters(v=>!v)} style={{...S.secBtn,position:"relative"}}>
-        <Filter size={13}/> Filters {activeFilters>0&&<span style={{marginLeft:4,background:"var(--navy)",color:"#fff",borderRadius:10,fontSize:10,padding:"1px 6px",fontWeight:700}}>{activeFilters}</span>}
-      </button>
-      {activeFilters>0&&<button onClick={clearFilters} style={{...S.secBtn,color:"var(--bad)",borderColor:"var(--bad)",fontSize:12}}>✕ Clear</button>}
-      <span style={{fontSize:13,color:"var(--ink-3)",marginLeft:"auto"}}>{filtered.length} of {active.length}</span>
+    <div style={{...S.searchWrap,marginBottom:14}}>
+      <Search size={15} style={{opacity:.5}}/><input style={S.search} placeholder="Search orders…" value={q} onChange={e=>setQ(e.target.value)}/>
     </div>
-
-    {showFilters&&(
-      <div style={{background:"var(--head)",border:"1px solid var(--line)",borderRadius:10,padding:"14px 16px",marginBottom:12,display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:10}}>
-        <label style={S.field}><span style={S.fLabel}>Customer</span>
-          <select style={S.input} value={filterCustomer} onChange={e=>setFilterCustomer(e.target.value)}>
-            <option value="">All customers</option>
-            {[...new Set(active.map(o=>o.customer_id))].map(id=><option key={id} value={id}>{custName(id)}</option>)}
-          </select>
-        </label>
-        <label style={S.field}><span style={S.fLabel}>Cost status</span>
-          <select style={S.input} value={filterStatus} onChange={e=>setFilterStatus(e.target.value)}>
-            <option value="">All</option>
-            <option value="pending">Pending</option>
-            <option value="done">Done</option>
-          </select>
-        </label>
-        <label style={S.field}><span style={S.fLabel}>Payment</span>
-          <select style={S.input} value={filterPayment} onChange={e=>setFilterPayment(e.target.value)}>
-            <option value="">All</option>
-            {["Unpaid","Invoiced","Paid"].map(p=><option key={p} value={p}>{p}</option>)}
-          </select>
-        </label>
-        <label style={S.field}><span style={S.fLabel}>Shipment stage</span>
-          <select style={S.input} value={filterStage} onChange={e=>setFilterStage(e.target.value)}>
-            <option value="">All stages</option>
-            {STAGES.map(st=><option key={st} value={st}>{st}</option>)}
-          </select>
-        </label>
-        <label style={S.field}><span style={S.fLabel}>Order date from</span>
-          <input style={S.input} type="date" value={filterDateFrom} onChange={e=>setFilterDateFrom(e.target.value)}/>
-        </label>
-        <label style={S.field}><span style={S.fLabel}>Order date to</span>
-          <input style={S.input} type="date" value={filterDateTo} onChange={e=>setFilterDateTo(e.target.value)}/>
-        </label>
-      </div>
-    )}
-
-    {filtered.length===0&&<div style={S.empty}>{active.length===0?"No active orders.":"No orders match the current filters."}</div>}
+    {filtered.length===0&&<div style={S.empty}>{invoiced.length===0?"No orders pending cost review — mark invoices as invoiced first.":"No orders match your search."}</div>}
     <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:14}}>
       {filtered.map(o=>{
         const s=shipmentOf(o.shipment_id);
-        const isOpen=openId===o.id;
         return(
-          <div key={o.id} style={{borderRadius:12,border:isOpen?"2px solid var(--navy)":"1px solid var(--line)",overflow:"hidden"}}>
-            <button onClick={()=>setOpenId(isOpen?null:o.id)}
-              style={{...S.shipCard,padding:"12px 16px",display:"flex",flexDirection:"column",justifyContent:"center",gap:6,cursor:"pointer",
-                width:"100%",background:isOpen?"var(--head)":"var(--card)",opacity:o.cost_done?.8:1,border:"none",borderRadius:0}}>
-              <div style={{display:"flex",alignItems:"center",gap:10}}>
-                <CreditCard size={15} style={{color:o.cost_done?"var(--good)":"var(--navy)",flexShrink:0}}/>
-                <span style={{fontFamily:"var(--mono)",fontWeight:700,fontSize:13,flexShrink:0}}>{o.id}</span>
-                <span style={{fontWeight:600,flexShrink:0}}>{custName(o.customer_id)}</span>
-                {o.product&&<span style={{fontSize:12.5,color:"var(--ink-3)"}}>{o.product}</span>}
-                {o.cost_done&&<span style={{fontSize:11,background:"var(--good-bg)",color:"var(--good)",borderRadius:5,padding:"1px 7px",fontWeight:700,flexShrink:0}}>✓ Done</span>}
-                <span style={{flex:1}}/>
-                <span className={"paybadge pay-"+(s?.payment??"Unpaid")} style={{flexShrink:0,width:80,textAlign:"center"}}>{s?.payment??"Unpaid"}</span>
-                <span style={{fontFamily:"var(--display)",fontWeight:700,fontSize:14,color:"var(--navy)",flexShrink:0,width:140,textAlign:"right"}}>{fmtIDR(Number(o.sell_idr||0))}</span>
-                <ChevronRight size={14} style={{color:"var(--ink-3)",transform:isOpen?"rotate(90deg)":"none",transition:".15s",flexShrink:0}}/>
-              </div>
-              <TabStatusBar order={o}/>
-            </button>
-            {isOpen && <div style={{borderTop:"2px solid var(--navy)"}}><CostDoc ctx={ctx} order={o} reload={reload} onClose={()=>setOpenId(null)}/></div>}
-          </div>
+          <button key={o.id} onClick={()=>setOpenId(openId===o.id?null:o.id)}
+            style={{...S.shipCard,padding:"12px 16px",display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer",
+              border:openId===o.id?"2px solid var(--navy)":"1px solid var(--line)",background:openId===o.id?"var(--head)":"var(--card)"}}>
+            <div style={{display:"flex",alignItems:"center",gap:10}}>
+              <CreditCard size={15} style={{color:"var(--navy)"}}/>
+              <span style={{fontFamily:"var(--mono)",fontWeight:700,fontSize:13}}>{o.id}</span>
+              <span style={{fontWeight:600}}>{custName(o.customer_id)}</span>
+              <span style={{fontSize:12.5,color:"var(--ink-3)"}}>{o.product}</span>
+            </div>
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
+              <span className={"paybadge pay-"+(s?.payment??"Unpaid")}>{s?.payment??"Unpaid"}</span>
+              <span style={{fontFamily:"var(--display)",fontWeight:700,fontSize:14,color:"var(--navy)"}}>{fmtIDR(Number(o.sell_idr||0))}</span>
+              <ChevronRight size={14} style={{color:"var(--ink-3)",transform:openId===o.id?"rotate(90deg)":"none",transition:".15s"}}/>
+            </div>
+          </button>
         );
       })}
-    </div>}
+    </div>
+    {openId && <CostDoc ctx={ctx} order={filtered.find(o=>o.id===openId)} reload={reload} onClose={()=>setOpenId(null)}/>}
   </>);
 }
 
@@ -1214,12 +829,12 @@ function CostDoc({ctx,order,reload,onClose}){
   const [usdRate,setUsdRate]=useState(String(order.invoice_usd_rate||""));
   const [sgdRate,setSgdRate]=useState(String(order.invoice_sgd_rate||""));
   const [saving,setSaving]=useState(false);
+  const [reverting,setReverting]=useState(false);
 
   // Local cost entries — start from DB, update optimistically
   const [localCosts,setLocalCosts]=useState(()=>(D.costEntries||[]).filter(e=>e.order_id===order.id));
   const [newCostLabel,setNewCostLabel]=useState("");
   const [newCostAmt,setNewCostAmt]=useState("");
-  const [newCostQty,setNewCostQty]=useState("1");
   const [newCostCur,setNewCostCur]=useState("USD");
 
   const fxU=+usdRate||ctx.liveFx?.usd_idr||15850;
@@ -1228,21 +843,19 @@ function CostDoc({ctx,order,reload,onClose}){
   const fmtOrig=(amt,cur)=>cur==="USD"?`$${Number(amt||0).toFixed(2)}`:cur==="SGD"?`S$${Number(amt||0).toFixed(2)}`:fmtIDR(amt||0);
 
   const extraFeesIDR=(order.order_extra_fees||[]).reduce((a,ef)=>{const qty=+ef.qty||1;return a+toIDR((+ef.amount||0)*qty,ef.currency||"USD");},0);
-  const invoiceFeesIDR=(order.extra_costs||[]).reduce((a,ec)=>{const qty=+ec.qty||1;return a+toIDR((+ec.amount||0)*qty,ec.currency||"IDR");},0);
+  const invoiceFeesIDR=(order.extra_costs||[]).reduce((a,ec)=>a+toIDR(+ec.amount||0,ec.currency||"IDR"),0);
   const revenueIDR=q.feeLines.reduce((a,l)=>a+toIDR(l.amount,l.currency),0)+extraFeesIDR+invoiceFeesIDR;
-  const costsIDR=localCosts.reduce((a,c)=>a+toIDR((+c.amount||0)*(+c.qty||1),c.currency),0);
+  const costsIDR=localCosts.reduce((a,c)=>a+toIDR(c.amount,c.currency),0);
   const netIDR=revenueIDR-costsIDR;
 
   async function addCost(){
     if(!newCostLabel.trim()||!newCostAmt) return;
-    const qty=Math.max(1,+newCostQty||1);
-    const totalAmt=(+newCostAmt)*qty;
-    // Store as flat amount (unit × qty) so existing cost_entries schema doesn't need a migration
-    const entry={label:qty>1?`${newCostLabel.trim()} ×${qty}`:newCostLabel.trim(),amount:totalAmt,currency:newCostCur,order_id:order.id,cost_date:new Date().toISOString().slice(0,10)};
+    const entry={label:newCostLabel.trim(),amount:+newCostAmt,currency:newCostCur,order_id:order.id,cost_date:new Date().toISOString().slice(0,10)};
     const {data}=await addCostEntry(entry);
+    // Optimistic: add to local state immediately, no full reload
     const newEntry=data?.[0]??{...entry,id:"tmp-"+Date.now()};
     setLocalCosts(prev=>[...prev,newEntry]);
-    setNewCostLabel("");setNewCostAmt("");setNewCostQty("1");
+    setNewCostLabel("");setNewCostAmt("");
   }
   async function removeCost(id){
     // Optimistic remove first, then DB
@@ -1254,6 +867,20 @@ function CostDoc({ctx,order,reload,onClose}){
     await updateOrder(order.id,{invoice_usd_rate:+usdRate||null,invoice_sgd_rate:+sgdRate||null});
     // Patch local order state so totals update without reload
     patchOrder&&patchOrder(order.id,{invoice_usd_rate:+usdRate||null,invoice_sgd_rate:+sgdRate||null});
+    setSaving(false);
+  }
+  async function doRevert(){
+    setReverting(true);
+    await updateOrder(order.id,{invoiced:false,invoiced_at:null});
+    onClose();
+    reload();
+    setReverting(false);
+  }
+  async function doComplete(){
+    setSaving(true);
+    await completeOrder(order.id,{invoice_usd_rate:+usdRate||null,invoice_sgd_rate:+sgdRate||null,sell_idr:Math.round(revenueIDR)});
+    onClose();
+    reload();
     setSaving(false);
   }
 
@@ -1291,13 +918,11 @@ function CostDoc({ctx,order,reload,onClose}){
           <span style={{flex:1,textAlign:"right"}}>{fmtOrig(total,ef.currency)}</span>
           <span style={{flex:1,textAlign:"right",fontWeight:600}}>{fmtIDR(toIDR(total,ef.currency))}</span><span style={{width:28}}/></div>);
       })}
-      {(order.extra_costs||[]).map((ec,i)=>{
-        const qty=+ec.qty||1; const total=(+ec.amount||0)*qty;
-        const label=qty>1?`${ec.label} ×${qty}`:ec.label;
-        return(<div key={"ec"+i} style={S.invLine}><span style={{flex:3,color:"var(--ink-2)"}}>{label}</span>
-          <span style={{flex:1,textAlign:"right"}}>{fmtOrig(total,ec.currency)}</span>
-          <span style={{flex:1,textAlign:"right",fontWeight:600}}>{fmtIDR(toIDR(total,ec.currency))}</span><span style={{width:28}}/></div>);
-      })}
+      {(order.extra_costs||[]).map((ec,i)=>(
+        <div key={"ec"+i} style={S.invLine}><span style={{flex:3,color:"var(--ink-2)"}}>{ec.label}</span>
+          <span style={{flex:1,textAlign:"right"}}>{fmtOrig(ec.amount,ec.currency)}</span>
+          <span style={{flex:1,textAlign:"right",fontWeight:600}}>{fmtIDR(toIDR(ec.amount,ec.currency))}</span><span style={{width:28}}/></div>
+      ))}
       <div style={{...S.invLine,fontWeight:700,color:"var(--navy)",borderTop:"2px solid var(--line)"}}>
         <span style={{flex:3}}>Total Revenue</span><span style={{flex:1}}/><span style={{flex:1,textAlign:"right",fontSize:15}}>{fmtIDR(revenueIDR)}</span><span style={{width:28}}/>
       </div>
@@ -1313,15 +938,12 @@ function CostDoc({ctx,order,reload,onClose}){
             <button onClick={()=>removeCost(c.id)} style={{width:28,background:"transparent",border:"none",color:"var(--bad)",cursor:"pointer",padding:2}}><Trash2 size={13}/></button>
           </div>
         ))}
-        <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:8,alignItems:"center"}}>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:8}}>
           <input style={{...S.input,flex:2,minWidth:140}} placeholder="Cost description (e.g. Shipping cost, Customs...)" value={newCostLabel} onChange={e=>setNewCostLabel(e.target.value)}/>
-          <input style={{...S.input,width:70}} type="number" min="1" placeholder="Qty" value={newCostQty} onChange={e=>setNewCostQty(e.target.value)} title="Quantity / multiplier"/>
-          <span style={{fontSize:12,color:"var(--ink-3)",flexShrink:0}}>×</span>
-          <input style={{...S.input,width:110}} type="number" placeholder="Unit amount" value={newCostAmt} onChange={e=>setNewCostAmt(e.target.value)}/>
+          <input style={{...S.input,width:110}} type="number" placeholder="Amount" value={newCostAmt} onChange={e=>setNewCostAmt(e.target.value)}/>
           <select style={{...S.input,width:80}} value={newCostCur} onChange={e=>setNewCostCur(e.target.value)}>
             <option value="USD">USD</option><option value="SGD">SGD</option><option value="IDR">IDR</option>
           </select>
-          {newCostAmt&&+newCostQty>1&&<span style={{fontSize:12,color:"var(--bad)",fontWeight:600,flexShrink:0}}>= {fmtOrig((+newCostAmt)*(+newCostQty||1),newCostCur)}</span>}
           <button style={{...S.printBtn,background:"var(--bad)"}} onClick={addCost}><Plus size={13}/> Add cost</button>
         </div>
       </div>
@@ -1358,32 +980,16 @@ function CostDoc({ctx,order,reload,onClose}){
       </div>
 
       <div style={S.invFoot}>
-        <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+        <div style={{display:"flex",gap:8}}>
           <button style={S.secBtn} onClick={onClose}>← Back</button>
-          <TabStatusBar order={order}/>
+          <button style={{...S.secBtn,color:"var(--warn)",borderColor:"var(--warn)"}} onClick={doRevert} disabled={reverting}>
+            <RefreshCw size={13}/> {reverting?"Reverting…":"Revert to invoice"}
+          </button>
         </div>
-        <div style={{display:"flex",gap:8,alignItems:"center"}}>
-          {!order.cost_done && !order.completed && (
-            <button style={{...S.printBtn,background:"var(--good)",color:"#fff",fontSize:14,padding:"10px 20px"}} onClick={async()=>{
-              setSaving(true);
-              const patch={cost_done:true,invoice_usd_rate:+usdRate||null,invoice_sgd_rate:+sgdRate||null,sell_idr:Math.round(revenueIDR)};
-              await updateOrder(order.id,patch);
-              patchOrder&&patchOrder(order.id,patch);
-              setSaving(false);
-            }} disabled={saving}>
-              <Check size={14}/> {saving?"Saving…":"Mark Cost Done"}
-            </button>
-          )}
-          {order.cost_done && !order.completed && (
-            <button style={{...S.secBtn,color:"var(--ink-3)",fontSize:12}} onClick={async()=>{
-              const patch={cost_done:false};
-              await updateOrder(order.id,patch);
-              patchOrder&&patchOrder(order.id,patch);
-            }}>↩ Undo Cost</button>
-          )}
-        </div>
+        <button style={{...S.printBtn,background:"var(--good)",color:"#fff",fontSize:14,padding:"10px 20px"}} onClick={doComplete} disabled={saving}>
+          <Check size={14}/> {saving?"Completing…":"Complete"}
+        </button>
       </div>
-      <CompleteAllButton order={order} ctx={ctx} onDone={onClose}/>
     </div>
   );
 }
@@ -1447,7 +1053,7 @@ function Completed({ctx}){
         const fxS=+o.invoice_sgd_rate||ctx.liveFx?.sgd_idr||11900;
         const toI=(amt,cur)=>cur==="USD"?(+amt||0)*fxU:cur==="SGD"?(+amt||0)*fxS:(+amt||0);
         const eQ=(o.order_extra_fees||[]).reduce((s,ef)=>{const qty=+ef.qty||1;return s+toI((+ef.amount||0)*qty,ef.currency||"USD");},0);
-        const iQ=(o.extra_costs||[]).reduce((s,ec)=>{const qty=+ec.qty||1;return s+toI((+ec.amount||0)*qty,ec.currency||"IDR");},0);
+        const iQ=(o.extra_costs||[]).reduce((s,ec)=>s+toI(+ec.amount||0,ec.currency||"IDR"),0);
         const total=+o.sell_idr||(quote(o).feeLines.reduce((s,l)=>s+toI(l.amount,l.currency),0)+eQ+iQ);
         return a+total;
       },0)/1e6)+"jt"} sub="from completed"/>
@@ -1483,7 +1089,7 @@ function Completed({ctx}){
         const fxS=+o.invoice_sgd_rate||ctx.liveFx?.sgd_idr||11900;
         const toIDR=(amt,cur)=>cur==="USD"?(+amt||0)*fxU:cur==="SGD"?(+amt||0)*fxS:(+amt||0);
         const extraQ=(o.order_extra_fees||[]).reduce((a,ef)=>{const qty=+ef.qty||1;return a+toIDR((+ef.amount||0)*qty,ef.currency||"USD");},0);
-        const invoiceQ=(o.extra_costs||[]).reduce((a,ec)=>{const qty=+ec.qty||1;return a+toIDR((+ec.amount||0)*qty,ec.currency||"IDR");},0);
+        const invoiceQ=(o.extra_costs||[]).reduce((a,ec)=>a+toIDR(+ec.amount||0,ec.currency||"IDR"),0);
         const totalIDR=+o.sell_idr||(q2.feeLines.reduce((a,l)=>a+toIDR(l.amount,l.currency),0)+extraQ+invoiceQ);
         const completedDate=o.completed_at?new Date(o.completed_at).toLocaleDateString("en-GB"):"—";
         const orderDate=o.order_date?new Date(o.order_date).toLocaleDateString("en-GB"):"—";
@@ -1499,28 +1105,28 @@ function Completed({ctx}){
           <div key={o.id} style={{background:"var(--card)",border:"1px solid var(--line)",borderRadius:12,overflow:"hidden",transition:".15s"}}>
             {/* Summary row — click to expand */}
             <button onClick={()=>setOpenId(isOpen?null:o.id)}
-              style={{width:"100%",display:"grid",gridTemplateColumns:"90px 1fr 160px 110px 110px 130px 20px",gap:"0 16px",alignItems:"center",padding:"14px 16px",background:"transparent",border:"none",cursor:"pointer",fontFamily:"var(--body)",textAlign:"left"}}>
-              <span style={{fontFamily:"var(--mono)",fontSize:12,color:"var(--ink-3)"}}>{o.id}</span>
-              <div>
+              style={{width:"100%",display:"flex",flexWrap:"wrap",gap:10,alignItems:"center",padding:"12px 16px",background:"transparent",border:"none",cursor:"pointer",fontFamily:"var(--body)",textAlign:"left"}}>
+              <span style={{fontFamily:"var(--mono)",fontSize:12,color:"var(--ink-3)",flex:"0 0 80px"}}>{o.id}</span>
+              <div style={{flex:2,minWidth:140}}>
                 <div style={{fontWeight:700,fontSize:14,color:"var(--ink)"}}>{custName(o.customer_id)}</div>
                 <div style={{fontSize:12,color:"var(--ink-3)"}}>{o.product}</div>
               </div>
-              <div>
-                <div style={{fontSize:10,fontWeight:700,color:"var(--ink-3)",letterSpacing:".05em"}}>SHIPMENT</div>
+              <div style={{flex:1,minWidth:90,textAlign:"left"}}>
+                <div style={{fontSize:11,color:"var(--ink-3)"}}>Shipment</div>
                 <div style={{fontSize:12.5,fontWeight:600,color:"var(--ink)"}}>{o.shipment_id||"—"}{c?.name?` · ${c.name}`:""}</div>
               </div>
-              <div>
-                <div style={{fontSize:10,fontWeight:700,color:"var(--ink-3)",letterSpacing:".05em"}}>ORDER DATE</div>
+              <div style={{flex:1,minWidth:80,textAlign:"left"}}>
+                <div style={{fontSize:11,color:"var(--ink-3)"}}>Order date</div>
                 <div style={{fontSize:12.5,color:"var(--ink)"}}>{orderDate}</div>
               </div>
-              <div>
-                <div style={{fontSize:10,fontWeight:700,color:"var(--ink-3)",letterSpacing:".05em"}}>COMPLETED</div>
+              <div style={{flex:1,minWidth:80,textAlign:"left"}}>
+                <div style={{fontSize:11,color:"var(--ink-3)"}}>Completed</div>
                 <div style={{fontSize:12.5,fontWeight:600,color:"var(--good)"}}>{completedDate}</div>
               </div>
-              <div style={{textAlign:"right"}}>
+              <div style={{flex:0,textAlign:"right"}}>
                 <div style={{fontFamily:"var(--display)",fontSize:15,fontWeight:800,color:"var(--navy)"}}>{fmtIDR(totalIDR)}</div>
               </div>
-              <ChevronRight size={16} style={{color:"var(--ink-3)",transform:isOpen?"rotate(90deg)":"none",transition:".15s",justifySelf:"center"}}/>
+              <ChevronRight size={16} style={{color:"var(--ink-3)",transform:isOpen?"rotate(90deg)":"none",transition:".15s",flexShrink:0}}/>
             </button>
 
             {/* Expanded detail */}
@@ -1628,29 +1234,30 @@ function Completed({ctx}){
 }
 
 // ──────────── FINANCE (owner only) ────────────
+// ──────────── FINANCE (owner only) ────────────
 function Finance({ctx}){
-  const {D,isOwner,custName,shipmentOf,quote}=ctx;
+  const {D,isOwner,custName,quote}=ctx;
   if(!isOwner) return null;
 
   const fxU=ctx.liveFx?.usd_idr||15850;
   const fxS=ctx.liveFx?.sgd_idr||11900;
   const toIDR=(amt,cur)=>cur==="USD"?(+amt||0)*fxU:cur==="SGD"?(+amt||0)*fxS:(+amt||0);
 
-  // Only completed orders are "settled" — use their locked sell_idr or recompute
-  const completed=D.orders.filter(o=>o.completed);
+  const [range,setRange]=useState("all");
+  const [chartType,setChartType]=useState("bar");
 
-  // Revenue per order: use locked sell_idr if set, else recompute from feeLines
+  // Revenue per order: use locked sell_idr if set, else recompute from feeLines+extras
   function orderRevenue(o){
     if(+o.sell_idr) return +o.sell_idr;
     const oFxU=+o.invoice_usd_rate||fxU;
     const oFxS=+o.invoice_sgd_rate||fxS;
     const toI=(amt,cur)=>cur==="USD"?(+amt||0)*oFxU:cur==="SGD"?(+amt||0)*oFxS:(+amt||0);
     const eQ=(o.order_extra_fees||[]).reduce((a,ef)=>{const qty=+ef.qty||1;return a+toI((+ef.amount||0)*qty,ef.currency||"USD");},0);
-    const iQ=(o.extra_costs||[]).reduce((a,ec)=>{const qty=+ec.qty||1;return a+toI((+ec.amount||0)*qty,ec.currency||"IDR");},0);
+    const iQ=(o.extra_costs||[]).reduce((a,ec)=>a+toI(+ec.amount||0,ec.currency||"IDR"),0);
     return quote(o).feeLines.reduce((a,l)=>a+toI(l.amount,l.currency),0)+eQ+iQ;
   }
 
-  // Cost per order: sum cost entries linked to this order
+  // Cost per order: sum cost_entries linked to this order (by order_id)
   function orderCostTotal(o){
     const oFxU=+o.invoice_usd_rate||fxU;
     const oFxS=+o.invoice_sgd_rate||fxS;
@@ -1658,66 +1265,195 @@ function Finance({ctx}){
     return (D.costEntries||[]).filter(e=>e.order_id===o.id).reduce((a,c)=>a+toI(c.amount,c.currency),0);
   }
 
-  const totalRev=completed.reduce((a,o)=>a+orderRevenue(o),0);
-  const totalCost=completed.reduce((a,o)=>a+orderCostTotal(o),0);
+  const allCompleted=D.orders.filter(o=>o.completed);
+
+  // Period filter
+  const now=new Date();
+  const filtered=allCompleted.filter(o=>{
+    if(range==="all") return true;
+    const d=new Date(o.completed_at||o.order_date||now);
+    if(range==="30d") return (now-d)<30*86400000;
+    if(range==="90d") return (now-d)<90*86400000;
+    if(range==="ytd") return d.getFullYear()===now.getFullYear();
+    return true;
+  });
+
+  const totalRev=filtered.reduce((a,o)=>a+orderRevenue(o),0);
+  const totalCost=filtered.reduce((a,o)=>a+orderCostTotal(o),0);
   const profit=totalRev-totalCost;
   const margin=totalRev>0?((profit/totalRev)*100):0;
 
-  return(<>
-    <div style={S.sectionLead}><h2 style={S.h2}>Finance</h2>
-      <p style={S.lead}>Summary of completed orders — revenue earned, operational costs deducted, and net profit. Only completed orders are counted.</p></div>
+  // Group by month for chart
+  const byMonth={};
+  filtered.forEach(o=>{
+    const d=new Date(o.completed_at||o.order_date||now);
+    const key=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
+    const label=d.toLocaleDateString("en-GB",{month:"short",year:"2-digit"});
+    if(!byMonth[key]) byMonth[key]={label,rev:0,cost:0,profit:0,count:0};
+    byMonth[key].rev+=orderRevenue(o);
+    byMonth[key].cost+=orderCostTotal(o);
+    byMonth[key].profit+=orderRevenue(o)-orderCostTotal(o);
+    byMonth[key].count++;
+  });
+  const months=Object.keys(byMonth).sort().map(k=>byMonth[k]);
+  const chartMax=months.length?Math.max(...months.map(m=>Math.max(m.rev,m.cost,1))):1;
+  const BAR_H=180;
 
+  const rows=filtered
+    .sort((a,b)=>(b.completed_at||"").localeCompare(a.completed_at||""))
+    .map(o=>({o,rev:orderRevenue(o),cost:orderCostTotal(o),net:orderRevenue(o)-orderCostTotal(o),mgn:orderRevenue(o)>0?((orderRevenue(o)-orderCostTotal(o))/orderRevenue(o))*100:0}));
+
+  return(<>
+    <div style={S.sectionLead}>
+      <h2 style={S.h2}>Finance</h2>
+      <p style={S.lead}>Summary of completed orders — revenue earned, costs deducted, net profit. Only completed orders are counted.</p>
+    </div>
+
+    {/* Period filter */}
+    <div style={{display:"flex",gap:8,marginBottom:20,flexWrap:"wrap",alignItems:"center"}}>
+      <span style={{fontSize:12,fontWeight:700,color:"var(--ink-3)",textTransform:"uppercase",letterSpacing:".06em"}}>Period</span>
+      {[["all","All time"],["30d","Last 30d"],["90d","Last 90d"],["ytd","This year"]].map(([v,l])=>(
+        <button key={v} style={{padding:"5px 14px",borderRadius:20,border:"1px solid "+(range===v?"var(--navy)":"var(--line)"),background:range===v?"var(--navy)":"transparent",color:range===v?"#fff":"var(--ink-2)",fontWeight:600,fontSize:12,cursor:"pointer",fontFamily:"var(--body)"}} onClick={()=>setRange(v)}>{l}</button>
+      ))}
+    </div>
+
+    {/* KPI summary */}
     <section style={S.kpis}>
-      <Kpi label="Revenue" value={fmtShort(totalRev)} sub={`${completed.length} completed orders`} accent/>
+      <Kpi label="Revenue" value={fmtShort(totalRev)} sub={`${filtered.length} completed`} accent/>
       <Kpi label="Total costs" value={fmtShort(totalCost)} sub="operational expenses" warn={totalCost>0}/>
       <Kpi label="Net profit" value={fmtShort(profit)} sub={profit>=0?"above breakeven":"below breakeven"} accent={profit>=0} warn={profit<0}/>
-      <Kpi label="Margin" value={`${margin.toFixed(1)}%`} sub="profit ÷ revenue" accent={margin>20} warn={margin<0}/>
+      <Kpi label="Avg margin" value={`${margin.toFixed(1)}%`} sub="profit ÷ revenue" accent={margin>20} warn={margin<0}/>
     </section>
 
-    <h3 style={{...S.h2,fontSize:16,marginTop:24,marginBottom:12}}>Completed orders ({completed.length})</h3>
-    {completed.length===0 && <div style={S.empty}>No completed orders yet.</div>}
-    <div style={{background:"var(--card)",border:"1px solid var(--line)",borderRadius:12,overflow:"hidden"}}>
-      {completed.length>0 && <div style={{display:"flex",gap:10,padding:"9px 16px",background:"var(--head)",borderBottom:"1px solid var(--line)",fontSize:11,fontWeight:700,color:"var(--ink-3)",textTransform:"uppercase",letterSpacing:".06em"}}>
+    {/* Chart */}
+    {months.length>0 && (
+      <div style={{...S.card,padding:18,marginBottom:20,overflow:"visible"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,flexWrap:"wrap",gap:10}}>
+          <div style={{fontWeight:700,fontSize:14,display:"flex",alignItems:"center",gap:8}}>
+            Monthly Performance
+            <span style={{fontSize:11,fontWeight:400,color:"var(--ink-3)"}}>{months.length} month{months.length!==1?"s":""}</span>
+          </div>
+          <div style={{display:"flex",gap:6}}>
+            {[["bar","Bar"],["trend","Trend"]].map(([v,l])=>(
+              <button key={v} style={{padding:"4px 12px",borderRadius:20,border:"1px solid "+(chartType===v?"var(--navy)":"var(--line)"),background:chartType===v?"var(--navy)":"transparent",color:chartType===v?"#fff":"var(--ink-2)",fontWeight:600,fontSize:11,cursor:"pointer",fontFamily:"var(--body)"}} onClick={()=>setChartType(v)}>{l}</button>
+            ))}
+          </div>
+        </div>
+        {/* Legend */}
+        <div style={{display:"flex",gap:14,marginBottom:12,fontSize:11,flexWrap:"wrap"}}>
+          {[["var(--good)","Revenue"],["var(--bad)","Cost"],["var(--navy)","Profit"]].map(([c,l])=>(
+            <span key={l} style={{display:"flex",alignItems:"center",gap:5,color:"var(--ink-2)"}}>
+              <span style={{width:10,height:10,borderRadius:2,background:c,display:"inline-block",flexShrink:0}}/>
+              {l}
+            </span>
+          ))}
+        </div>
+
+        {chartType==="bar" ? (
+          /* Bar chart */
+          <div style={{display:"flex",alignItems:"flex-end",gap:10,overflowX:"auto",paddingBottom:8,minHeight:BAR_H+40}}>
+            {months.map((m,i)=>(
+              <div key={i} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:4,minWidth:55,flex:"0 0 auto"}}>
+                <div style={{display:"flex",gap:3,alignItems:"flex-end",height:BAR_H}}>
+                  {[{v:m.rev,c:"var(--good)"},{v:m.cost,c:"var(--bad)"},{v:m.profit,c:"var(--navy)"}].map(({v,c},j)=>{
+                    const absH=chartMax>0?Math.max(Math.abs(v)/chartMax*BAR_H,v!==0?2:0):0;
+                    const isNeg=v<0;
+                    return(
+                      <div key={j} title={`${["Revenue","Cost","Profit"][j]}: ${fmtIDR(v)}`} style={{
+                        width:14,height:absH,
+                        background:isNeg?"var(--bad-bg)":c,
+                        border:isNeg?"1px dashed var(--bad)":"none",
+                        borderRadius:"2px 2px 0 0",
+                        alignSelf:"flex-end",cursor:"default",
+                        transition:"height .3s ease"
+                      }}/>
+                    );
+                  })}
+                </div>
+                <div style={{fontSize:10,color:"var(--ink-3)",textAlign:"center",lineHeight:1.2}}>{m.label}</div>
+                <div style={{fontSize:9,color:"var(--ink-3)"}}>{m.count}×</div>
+              </div>
+            ))}
+          </div>
+        ):(
+          /* SVG trend lines */
+          (()=>{
+            const W=560,H=180,pad={t:10,r:20,b:30,l:66};
+            const inner={w:W-pad.l-pad.r,h:H-pad.t-pad.b};
+            const vals=months.flatMap(m=>[m.rev,m.cost,m.profit]);
+            const vMax=Math.max(...vals,1),vMin=Math.min(...vals,0),vRange=Math.max(vMax-vMin,1);
+            const xS=(i)=>pad.l+(months.length>1?i*(inner.w/(months.length-1)):inner.w/2);
+            const yS=(v)=>pad.t+inner.h*(1-(v-vMin)/vRange);
+            const mkPath=(key,c)=>{
+              const d=months.map((m,i)=>`${i===0?"M":"L"}${xS(i).toFixed(1)},${yS(m[key]).toFixed(1)}`).join(" ");
+              return <path key={key} d={d} fill="none" stroke={c} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round"/>;
+            };
+            return(
+              <svg viewBox={`0 0 ${W} ${H}`} style={{width:"100%",maxWidth:W,display:"block",overflow:"visible"}}>
+                {[0,.25,.5,.75,1].map(t=>{
+                  const y=pad.t+t*inner.h,v=vMax-(t*vRange);
+                  return <g key={t}>
+                    <line x1={pad.l} x2={W-pad.r} y1={y} y2={y} stroke="#E5E7EB" strokeWidth={.5}/>
+                    <text x={pad.l-5} y={y+3.5} fontSize={8.5} fill="#9CA3AF" textAnchor="end">{fmtShort(v)}</text>
+                  </g>;
+                })}
+                {vMin<0&&<line x1={pad.l} x2={W-pad.r} y1={yS(0)} y2={yS(0)} stroke="#D1D5DB" strokeWidth={1} strokeDasharray="4,3"/>}
+                {mkPath("rev","var(--good)")}
+                {mkPath("cost","var(--bad)")}
+                {mkPath("profit","var(--navy)")}
+                {months.map((m,i)=>[["rev","var(--good)"],["cost","var(--bad)"],["profit","var(--navy)"]].map(([k,c])=>(
+                  <circle key={k+i} cx={xS(i)} cy={yS(m[k])} r={3} fill={c} stroke="#fff" strokeWidth={1}>
+                    <title>{m.label} {["Revenue","Cost","Profit"][["rev","cost","profit"].indexOf(k)]}: {fmtIDR(m[k])}</title>
+                  </circle>
+                )))}
+                {months.map((m,i)=>(
+                  <text key={i} x={xS(i)} y={H-3} fontSize={8.5} fill="#9CA3AF" textAnchor="middle">{m.label}</text>
+                ))}
+              </svg>
+            );
+          })()
+        )}
+      </div>
+    )}
+
+    {/* Per-order table */}
+    <div style={{background:"var(--card)",border:"1px solid var(--line)",borderRadius:14,overflow:"hidden",marginBottom:16}}>
+      <div style={{display:"flex",gap:10,padding:"11px 16px",background:"var(--head)",borderBottom:"1px solid var(--line)",fontSize:11,fontWeight:700,color:"var(--ink-3)",textTransform:"uppercase",letterSpacing:".06em"}}>
         <span style={{flex:2}}>Order / Customer</span>
         <span style={{flex:1}}>Completed</span>
         <span style={{flex:1,textAlign:"right"}}>Revenue</span>
         <span style={{flex:1,textAlign:"right",color:"var(--bad)"}}>Costs</span>
         <span style={{flex:1,textAlign:"right"}}>Profit</span>
-        <span style={{flex:0.7,textAlign:"right"}}>Margin</span>
-      </div>}
-      {completed.sort((a,b)=>(b.completed_at||"").localeCompare(a.completed_at||"")).map(o=>{
-        const rev=orderRevenue(o);
-        const cost=orderCostTotal(o);
-        const net=rev-cost;
-        const mgn=rev>0?((net/rev)*100):0;
-        return(
-          <div key={o.id} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 16px",borderBottom:"1px solid var(--line)",fontSize:13}}>
-            <div style={{flex:2}}>
-              <span style={{fontFamily:"var(--mono)",fontSize:12,color:"var(--ink-3)"}}>{o.id}</span>
-              <span style={{marginLeft:8,fontWeight:600}}>{custName(o.customer_id)}</span>
-              <div style={{fontSize:11.5,color:"var(--ink-3)",marginTop:1}}>{o.product}</div>
-            </div>
-            <span style={{flex:1,fontSize:12,color:"var(--ink-3)"}}>{o.completed_at?new Date(o.completed_at).toLocaleDateString("en-GB"):"—"}</span>
-            <span style={{flex:1,textAlign:"right",fontWeight:600,color:"var(--navy)"}}>{fmtIDR(rev)}</span>
-            <span style={{flex:1,textAlign:"right",color:"var(--bad)"}}>{cost>0?`−${fmtIDR(cost)}`:"—"}</span>
-            <span style={{flex:1,textAlign:"right",fontWeight:700,color:net>=0?"var(--good)":"var(--bad)"}}>{fmtIDR(net)}</span>
-            <span style={{flex:0.7,textAlign:"right"}}>
-              <span style={{fontSize:11,fontWeight:700,padding:"2px 6px",borderRadius:6,
-                background:mgn>=20?"var(--good-bg)":mgn>=0?"var(--warn-bg)":"var(--bad-bg)",
-                color:mgn>=20?"var(--good)":mgn>=0?"var(--warn)":"var(--bad)"}}>
-                {mgn.toFixed(1)}%
-              </span>
-            </span>
+        <span style={{flex:.7,textAlign:"right"}}>Margin</span>
+      </div>
+      {rows.length===0&&<div style={S.empty}>No completed orders in this period.</div>}
+      {rows.map(({o,rev,cost,net,mgn})=>(
+        <div key={o.id} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 16px",borderBottom:"1px solid var(--line)",fontSize:13}}>
+          <div style={{flex:2}}>
+            <span style={{fontFamily:"var(--mono)",fontSize:12,color:"var(--ink-3)"}}>{o.id}</span>
+            <span style={{marginLeft:8,fontWeight:600}}>{custName(o.customer_id)}</span>
+            <div style={{fontSize:11.5,color:"var(--ink-3)",marginTop:1}}>{o.product}</div>
           </div>
-        );
-      })}
-      {completed.length>0 && <div style={{display:"flex",gap:10,padding:"10px 16px",borderTop:"2px solid var(--line)",fontSize:13,fontWeight:700}}>
-        <span style={{flex:2}}>Total</span>
+          <span style={{flex:1,fontSize:12,color:"var(--ink-3)"}}>{o.completed_at?new Date(o.completed_at).toLocaleDateString("en-GB"):"—"}</span>
+          <span style={{flex:1,textAlign:"right",fontWeight:600,color:"var(--good)"}}>{fmtIDR(rev)}</span>
+          <span style={{flex:1,textAlign:"right",color:"var(--bad)"}}>{cost>0?`−${fmtIDR(cost)}`:"—"}</span>
+          <span style={{flex:1,textAlign:"right",fontWeight:700,color:net>=0?"var(--good)":"var(--bad)"}}>{fmtIDR(net)}</span>
+          <span style={{flex:.7,textAlign:"right"}}>
+            <span style={{fontSize:11,fontWeight:700,padding:"2px 6px",borderRadius:6,
+              background:mgn>=20?"var(--good-bg)":mgn>=0?"var(--warn-bg)":"var(--bad-bg)",
+              color:mgn>=20?"var(--good)":mgn>=0?"var(--warn)":"var(--bad)"}}>
+              {mgn.toFixed(1)}%
+            </span>
+          </span>
+        </div>
+      ))}
+      {rows.length>0&&<div style={{display:"flex",gap:10,padding:"10px 16px",borderTop:"2px solid var(--line)",fontSize:13,fontWeight:700}}>
+        <span style={{flex:2}}>Total ({rows.length})</span>
         <span style={{flex:1}}/>
-        <span style={{flex:1,textAlign:"right",color:"var(--navy)"}}>{fmtIDR(totalRev)}</span>
+        <span style={{flex:1,textAlign:"right",color:"var(--good)"}}>{fmtIDR(totalRev)}</span>
         <span style={{flex:1,textAlign:"right",color:"var(--bad)"}}>{totalCost>0?`−${fmtIDR(totalCost)}`:"—"}</span>
         <span style={{flex:1,textAlign:"right",color:profit>=0?"var(--good)":"var(--bad)"}}>{fmtIDR(profit)}</span>
-        <span style={{flex:0.7,textAlign:"right"}}>
+        <span style={{flex:.7,textAlign:"right"}}>
           <span style={{fontSize:11,fontWeight:700,padding:"2px 6px",borderRadius:6,
             background:margin>=20?"var(--good-bg)":margin>=0?"var(--warn-bg)":"var(--bad-bg)",
             color:margin>=20?"var(--good)":margin>=0?"var(--warn)":"var(--bad)"}}>
@@ -1729,7 +1465,6 @@ function Finance({ctx}){
   </>);
 }
 
-// ──────────── SHARED ────────────
 function Kpi({label,value,sub,accent,warn}){return(<div style={{...S.kpi,...(accent?{borderColor:"var(--accent-line)"}:{}),...(warn?{borderColor:"var(--warn)"}:{})}}><div style={S.kpiLabel}>{label}</div><div style={{...S.kpiVal,...(accent?{color:"var(--navy)"}:{}),...(warn?{color:"var(--warn)"}:{})}}>{value}</div><div style={S.kpiSub}>{sub}</div></div>);}
 function Detail({label,value,strong}){return <div><div style={S.dLabel}>{label}</div><div style={{...S.dVal,...(strong?{color:"var(--navy)",fontWeight:700,textTransform:"capitalize"}:{})}}>{value}</div></div>;}
 function ResCell({label,value,note,dim,highlight,big}){return(<div style={{...S.resCell,...(highlight?{background:"var(--navy)",color:"#fff",borderColor:"var(--navy)"}:{}),...(dim?{opacity:.4}:{})}}><div style={{fontSize:10.5,textTransform:"uppercase",letterSpacing:".07em",opacity:.8}}>{label}{note?` ${note}`:""}</div><div style={{fontFamily:"var(--display)",fontWeight:800,fontSize:big?20:16,marginTop:3,textTransform:label==="Charged kg"?"capitalize":"none"}}>{value}</div></div>);}
