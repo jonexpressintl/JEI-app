@@ -909,6 +909,12 @@ function InvoiceDoc({ctx,order,onClose,reload}){
   const [newCostQty,setNewCostQty]=useState("1");
   const [newCostCur,setNewCostCur]=useState("IDR");
   const [saving,setSaving]=useState(false);
+  // Edit state for ORDER extra fee rows (order_extra_fees)
+  const [editingOEF,setEditingOEF]=useState(null);
+  const [oefDraft,setOefDraft]=useState({label:"",qty:"1",amount:"",currency:"USD"});
+  // Edit state for INVOICE extra cost rows (extra_costs)
+  const [editingEC,setEditingEC]=useState(null);
+  const [ecDraft,setEcDraft]=useState({label:"",qty:"1",amount:"",currency:"IDR"});
 
   const fxU=+usdRate||ctx.liveFx?.usd_idr||15850;
   const fxS=+sgdRate||ctx.liveFx?.sgd_idr||11900;
@@ -954,6 +960,26 @@ function InvoiceDoc({ctx,order,onClose,reload}){
     if(!error) patchOrder?patchOrder(order.id,patch):reload&&reload();
   }
 
+  async function saveOefEdit(idx){
+    const updated=(order.order_extra_fees||[]).map((x,j)=>j===idx?{
+      label:oefDraft.label.trim(),qty:Math.max(1,+oefDraft.qty||1),amount:+oefDraft.amount||0,currency:oefDraft.currency
+    }:x);
+    const patch={order_extra_fees:updated};
+    const {error}=await updateOrder(order.id,patch);
+    if(!error){patchOrder?patchOrder(order.id,patch):reload&&reload();setEditingOEF(null);}
+  }
+
+  async function saveEcEdit(idx){
+    const updated=(order.extra_costs||[]).map((x,j)=>j===idx?{
+      label:ecDraft.label.trim(),qty:Math.max(1,+ecDraft.qty||1),amount:+ecDraft.amount||0,currency:ecDraft.currency
+    }:x);
+    const newTotal=updated.reduce((a,ec)=>a+toIDR((+ec.amount||0)*(+ec.qty||1),ec.currency),0);
+    const otherFeesIDR=grandTotalIDR-invoiceFeesIDR;
+    const patch={extra_costs:updated,sell_idr:Math.round(otherFeesIDR+newTotal)};
+    const {error}=await updateOrder(order.id,patch);
+    if(!error){patchOrder?patchOrder(order.id,patch):reload&&reload();setEditingEC(null);}
+  }
+
   function downloadPDF(){
     const doc=generateInvoicePDF(order,customer,s,c,{usd_idr:fxU,sgd_idr:fxS},D.orders);
     doc.save(`${invNo}.pdf`);
@@ -985,41 +1011,79 @@ function InvoiceDoc({ctx,order,onClose,reload}){
           <span style={{width:28}}/>
         </div>
       ))}
-      {/* Order-tab extra fees — deletable */}
+      {/* Order-tab extra fees — editable + deletable */}
       {(order.order_extra_fees||[]).map((ef,i)=>{
         const qty=+ef.qty||1;
         const total=(+ef.amount||0)*qty;
         const label=qty>1?`${ef.label||"Additional cost"} ×${qty}`:(ef.label||"Additional cost");
+        const isEditing=editingOEF===i;
         return(
-          <div key={"oef-"+i} style={{...S.invLine,background:"var(--gold-bg)"}}>
-            <span style={{flex:3,display:"flex",alignItems:"center",gap:6}}>
-              <span style={{fontSize:10,background:"var(--gold)",color:"#fff",borderRadius:4,padding:"1px 5px",fontWeight:700,letterSpacing:".04em"}}>ORDER</span>
-              {label}
-            </span>
-            <span style={{flex:1,textAlign:"right"}}>{fmtOrig(total,ef.currency)}</span>
-            <span style={{flex:1,textAlign:"right",fontWeight:600}}>{fmtIDR(toIDR(total,ef.currency))}</span>
-            <button onClick={async()=>{
-              const updated=(order.order_extra_fees||[]).filter((_,j)=>j!==i);
-              const patch={order_extra_fees:updated};
-              const {error}=await updateOrder(order.id,patch);
-              if(!error) patchOrder?patchOrder(order.id,patch):reload&&reload();
-            }} style={{width:28,background:"transparent",border:"none",color:"var(--bad)",cursor:"pointer",padding:2,flexShrink:0}}><Trash2 size={13}/></button>
+          <div key={"oef-"+i} style={{...S.invLine,background:"var(--gold-bg)",flexWrap:"wrap",gap:8}}>
+            {isEditing?(
+              <div style={{flex:1,display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+                <input style={{...S.input,flex:2,minWidth:120}} value={oefDraft.label} onChange={e=>setOefDraft(d=>({...d,label:e.target.value}))} placeholder="Description"/>
+                <input style={{...S.input,width:70}} type="number" min="1" value={oefDraft.qty} onChange={e=>setOefDraft(d=>({...d,qty:e.target.value}))} placeholder="Qty"/>
+                <input style={{...S.input,width:90}} type="number" value={oefDraft.amount} onChange={e=>setOefDraft(d=>({...d,amount:e.target.value}))} placeholder="Amount"/>
+                <select style={{...S.input,width:80}} value={oefDraft.currency} onChange={e=>setOefDraft(d=>({...d,currency:e.target.value}))}>
+                  <option>USD</option><option>SGD</option><option>IDR</option>
+                </select>
+                <button onClick={()=>saveOefEdit(i)} style={{padding:"4px 10px",border:"none",borderRadius:6,background:"var(--good)",color:"#fff",fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"var(--body)"}}>Save</button>
+                <button onClick={()=>setEditingOEF(null)} style={{padding:"4px 10px",border:"none",borderRadius:6,background:"var(--head)",fontSize:12,cursor:"pointer",fontFamily:"var(--body)"}}>Cancel</button>
+              </div>
+            ):(
+              <>
+                <span style={{flex:3,display:"flex",alignItems:"center",gap:6}}>
+                  <span style={{fontSize:10,background:"var(--gold)",color:"#fff",borderRadius:4,padding:"1px 5px",fontWeight:700,letterSpacing:".04em"}}>ORDER</span>
+                  {label}
+                </span>
+                <span style={{flex:1,textAlign:"right"}}>{fmtOrig(total,ef.currency)}</span>
+                <span style={{flex:1,textAlign:"right",fontWeight:600}}>{fmtIDR(toIDR(total,ef.currency))}</span>
+                <div style={{display:"flex",gap:4,flexShrink:0}}>
+                  <button onClick={()=>{setOefDraft({label:ef.label||"",qty:String(+ef.qty||1),amount:String(+ef.amount||0),currency:ef.currency||"USD"});setEditingOEF(i);}} style={{width:28,background:"transparent",border:"none",color:"var(--ink-3)",cursor:"pointer",padding:2}} title="Edit"><Pencil size={13}/></button>
+                  <button onClick={async()=>{
+                    const updated=(order.order_extra_fees||[]).filter((_,j)=>j!==i);
+                    const patch={order_extra_fees:updated};
+                    const {error}=await updateOrder(order.id,patch);
+                    if(!error) patchOrder?patchOrder(order.id,patch):reload&&reload();
+                  }} style={{width:28,background:"transparent",border:"none",color:"var(--bad)",cursor:"pointer",padding:2}} title="Delete"><Trash2 size={13}/></button>
+                </div>
+              </>
+            )}
           </div>
         );
       })}
-      {/* Invoice-tab extra costs — deletable (existing behaviour) */}
+      {/* Invoice-tab extra costs — editable + deletable */}
       {(order.extra_costs||[]).map((ec,i)=>{
         const qty=+ec.qty||1; const total=(+ec.amount||0)*qty;
         const label=qty>1?`${ec.label} ×${qty}`:ec.label;
+        const isEditing=editingEC===i;
         return(
-          <div key={"ec-"+i} style={S.invLine}>
-            <span style={{flex:3,display:"flex",alignItems:"center",gap:6}}>
-              <span style={{fontSize:10,background:"var(--navy)",color:"#fff",borderRadius:4,padding:"1px 5px",fontWeight:700,letterSpacing:".04em"}}>INVOICE</span>
-              {label}
-            </span>
-            <span style={{flex:1,textAlign:"right"}}>{fmtOrig(total,ec.currency)}</span>
-            <span style={{flex:1,textAlign:"right",fontWeight:600}}>{fmtIDR(toIDR(total,ec.currency))}</span>
-            <button onClick={()=>removeCost(i)} style={{width:28,background:"transparent",border:"none",color:"var(--bad)",cursor:"pointer",padding:2,flexShrink:0}}><Trash2 size={13}/></button>
+          <div key={"ec-"+i} style={{...S.invLine,flexWrap:"wrap",gap:8}}>
+            {isEditing?(
+              <div style={{flex:1,display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+                <input style={{...S.input,flex:2,minWidth:120}} value={ecDraft.label} onChange={e=>setEcDraft(d=>({...d,label:e.target.value}))} placeholder="Description"/>
+                <input style={{...S.input,width:70}} type="number" min="1" value={ecDraft.qty} onChange={e=>setEcDraft(d=>({...d,qty:e.target.value}))} placeholder="Qty"/>
+                <input style={{...S.input,width:90}} type="number" value={ecDraft.amount} onChange={e=>setEcDraft(d=>({...d,amount:e.target.value}))} placeholder="Amount"/>
+                <select style={{...S.input,width:80}} value={ecDraft.currency} onChange={e=>setEcDraft(d=>({...d,currency:e.target.value}))}>
+                  <option>IDR</option><option>USD</option><option>SGD</option>
+                </select>
+                <button onClick={()=>saveEcEdit(i)} style={{padding:"4px 10px",border:"none",borderRadius:6,background:"var(--good)",color:"#fff",fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"var(--body)"}}>Save</button>
+                <button onClick={()=>setEditingEC(null)} style={{padding:"4px 10px",border:"none",borderRadius:6,background:"var(--head)",fontSize:12,cursor:"pointer",fontFamily:"var(--body)"}}>Cancel</button>
+              </div>
+            ):(
+              <>
+                <span style={{flex:3,display:"flex",alignItems:"center",gap:6}}>
+                  <span style={{fontSize:10,background:"var(--navy)",color:"#fff",borderRadius:4,padding:"1px 5px",fontWeight:700,letterSpacing:".04em"}}>INVOICE</span>
+                  {label}
+                </span>
+                <span style={{flex:1,textAlign:"right"}}>{fmtOrig(total,ec.currency)}</span>
+                <span style={{flex:1,textAlign:"right",fontWeight:600}}>{fmtIDR(toIDR(total,ec.currency))}</span>
+                <div style={{display:"flex",gap:4,flexShrink:0}}>
+                  <button onClick={()=>{setEcDraft({label:ec.label||"",qty:String(+ec.qty||1),amount:String(+ec.amount||0),currency:ec.currency||"IDR"});setEditingEC(i);}} style={{width:28,background:"transparent",border:"none",color:"var(--ink-3)",cursor:"pointer",padding:2}} title="Edit"><Pencil size={13}/></button>
+                  <button onClick={()=>removeCost(i)} style={{width:28,background:"transparent",border:"none",color:"var(--bad)",cursor:"pointer",padding:2}} title="Delete"><Trash2 size={13}/></button>
+                </div>
+              </>
+            )}
           </div>
         );
       })}
@@ -1221,6 +1285,9 @@ function CostDoc({ctx,order,reload,onClose}){
   const [newCostAmt,setNewCostAmt]=useState("");
   const [newCostQty,setNewCostQty]=useState("1");
   const [newCostCur,setNewCostCur]=useState("USD");
+  // Edit state for existing cost entries
+  const [editingCost,setEditingCost]=useState(null);
+  const [costDraft,setCostDraft]=useState({label:"",amount:"",currency:"USD"});
 
   const fxU=+usdRate||ctx.liveFx?.usd_idr||15850;
   const fxS=+sgdRate||ctx.liveFx?.sgd_idr||11900;
@@ -1248,6 +1315,12 @@ function CostDoc({ctx,order,reload,onClose}){
     // Optimistic remove first, then DB
     setLocalCosts(prev=>prev.filter(c=>c.id!==id));
     await deleteCostEntry(id);
+  }
+  async function saveCostEdit(id){
+    const patch={label:costDraft.label.trim(),amount:+costDraft.amount||0,currency:costDraft.currency};
+    setLocalCosts(prev=>prev.map(c=>c.id===id?{...c,...patch}:c));
+    setEditingCost(null);
+    await updateCostEntry(id,patch);
   }
   async function saveRates(){
     setSaving(true);
@@ -1305,14 +1378,33 @@ function CostDoc({ctx,order,reload,onClose}){
       {/* Cost section — add/delete lines */}
       <div style={{...S.addCostBox,borderColor:"var(--bad)"}}>
         <div style={{fontSize:12,fontWeight:700,color:"var(--bad)",letterSpacing:".04em",marginBottom:8}}>COSTS (deducted from revenue)</div>
-        {localCosts.map((c,i)=>(
-          <div key={c.id} style={{...S.invLine,background:"var(--bad-bg)"}}>
-            <span style={{flex:3,color:"var(--bad)"}}>{c.label}</span>
-            <span style={{flex:1,textAlign:"right",color:"var(--bad)"}}>{fmtOrig(c.amount,c.currency)}</span>
-            <span style={{flex:1,textAlign:"right",fontWeight:600,color:"var(--bad)"}}>−{fmtIDR(toIDR(c.amount,c.currency))}</span>
-            <button onClick={()=>removeCost(c.id)} style={{width:28,background:"transparent",border:"none",color:"var(--bad)",cursor:"pointer",padding:2}}><Trash2 size={13}/></button>
+        {localCosts.map((c,i)=>{
+          const isEditing=editingCost===c.id;
+          return(
+          <div key={c.id} style={{...S.invLine,background:"var(--bad-bg)",flexWrap:"wrap",gap:8}}>
+            {isEditing?(
+              <div style={{flex:1,display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+                <input style={{...S.input,flex:2,minWidth:120}} value={costDraft.label} onChange={e=>setCostDraft(d=>({...d,label:e.target.value}))} placeholder="Description"/>
+                <input style={{...S.input,width:90}} type="number" value={costDraft.amount} onChange={e=>setCostDraft(d=>({...d,amount:e.target.value}))} placeholder="Amount"/>
+                <select style={{...S.input,width:80}} value={costDraft.currency} onChange={e=>setCostDraft(d=>({...d,currency:e.target.value}))}>
+                  <option>USD</option><option>SGD</option><option>IDR</option>
+                </select>
+                <button onClick={()=>saveCostEdit(c.id)} style={{padding:"4px 10px",border:"none",borderRadius:6,background:"var(--good)",color:"#fff",fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"var(--body)"}}>Save</button>
+                <button onClick={()=>setEditingCost(null)} style={{padding:"4px 10px",border:"none",borderRadius:6,background:"var(--head)",fontSize:12,cursor:"pointer",fontFamily:"var(--body)"}}>Cancel</button>
+              </div>
+            ):(
+              <>
+                <span style={{flex:3,color:"var(--bad)"}}>{c.label}</span>
+                <span style={{flex:1,textAlign:"right",color:"var(--bad)"}}>{fmtOrig(c.amount,c.currency)}</span>
+                <span style={{flex:1,textAlign:"right",fontWeight:600,color:"var(--bad)"}}>−{fmtIDR(toIDR(c.amount,c.currency))}</span>
+                <div style={{display:"flex",gap:4,flexShrink:0}}>
+                  <button onClick={()=>{setCostDraft({label:c.label||"",amount:String(+c.amount||0),currency:c.currency||"USD"});setEditingCost(c.id);}} style={{width:28,background:"transparent",border:"none",color:"var(--ink-3)",cursor:"pointer",padding:2}} title="Edit"><Pencil size={13}/></button>
+                  <button onClick={()=>removeCost(c.id)} style={{width:28,background:"transparent",border:"none",color:"var(--bad)",cursor:"pointer",padding:2}} title="Delete"><Trash2 size={13}/></button>
+                </div>
+              </>
+            )}
           </div>
-        ))}
+        );})}
         <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:8,alignItems:"center"}}>
           <input style={{...S.input,flex:2,minWidth:140}} placeholder="Cost description (e.g. Shipping cost, Customs...)" value={newCostLabel} onChange={e=>setNewCostLabel(e.target.value)}/>
           <input style={{...S.input,width:70}} type="number" min="1" placeholder="Qty" value={newCostQty} onChange={e=>setNewCostQty(e.target.value)} title="Quantity / multiplier"/>

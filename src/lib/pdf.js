@@ -168,9 +168,9 @@ export function generateInvoicePDF(order, customer, shipment, courier, liveFx) {
     if (+order.fee_2) feeLines.push({ label: `Seafreight (${sKg.toFixed(1)}kg)`, amount: (+order.fee_2) * sKg, currency: c2 });
     if (+order.fee_additional) feeLines.push({ label: "Additional cost", amount: +order.fee_additional, currency: order.fee_additional_cur || "USD" });
   } else {
-    if (+order.fee_1) feeLines.push({ label: `Seafreight USA→SG (${cbmA.toFixed(2)} CBM)`, amount: (+order.fee_1) * cbmA, currency: order.fee_1_cur || "USD" });
+    if (+order.fee_1) feeLines.push({ label: `Seafreight USA-SG (${cbmA.toFixed(2)} CBM)`, amount: (+order.fee_1) * cbmA, currency: order.fee_1_cur || "USD" });
     if (+order.fee_clearance) feeLines.push({ label: "Clearance fee", amount: +order.fee_clearance, currency: order.fee_clearance_cur || "SGD" });
-    if (+order.fee_2) feeLines.push({ label: `Seafreight SG→ID (${cbmB.toFixed(2)} CBM)`, amount: (+order.fee_2) * cbmB, currency: order.fee_2_cur || "IDR" });
+    if (+order.fee_2) feeLines.push({ label: `Seafreight SG-ID (${cbmB.toFixed(2)} CBM)`, amount: (+order.fee_2) * cbmB, currency: order.fee_2_cur || "IDR" });
     if (+order.fee_additional) feeLines.push({ label: "Additional cost", amount: +order.fee_additional, currency: order.fee_additional_cur || "USD" });
   }
 
@@ -195,8 +195,9 @@ export function generateInvoicePDF(order, customer, shipment, courier, liveFx) {
   const fx = liveFx || { usd_idr: 15850, sgd_idr: 11900 };
   const toIDR = (amt, c) => c === "USD" ? (+amt || 0) * fx.usd_idr : c === "SGD" ? (+amt || 0) * fx.sgd_idr : (+amt || 0);
 
-  // Fee lines table — autoTable handles page breaks automatically
-  const t1 = autoTable(doc, {
+  // Fee lines table — autoTable handles page breaks automatically, adding
+  // as many pages as needed for a long list of extra costs/fees.
+  autoTable(doc, {
     startY: Math.max(cy, by + bh) + 6,
     head: [["Description", "Amount", "In IDR"]],
     body: feeLines.length > 0
@@ -210,17 +211,24 @@ export function generateInvoicePDF(order, customer, shipment, courier, liveFx) {
     // Keep rows from being split across pages
     rowPageBreak: "avoid",
   });
+  // IMPORTANT: autoTable(doc, opts) itself always returns undefined in the
+  // v5 functional API — the finished table's position lives on
+  // doc.lastAutoTable, not on the call's return value. Using the return
+  // value here was the bug that made the totals block always start at a
+  // fixed Y position, so it overlapped the fee table whenever the list of
+  // extra costs/fees was long enough to run past that fixed point.
+  const t1FinalY = doc.lastAutoTable?.finalY;
 
   // Totals table
   const totalIDR = feeLines.reduce((a, l) => a + toIDR(l.amount, l.currency), 0);
   const usesUSD = feeLines.some(l => l.currency === "USD");
   const usesSGD = feeLines.some(l => l.currency === "SGD");
   const rateRows = [];
-  if (usesUSD) rateRows.push([{ content: "USD → IDR rate", styles: { halign: "right" } }, fmtRp(fx.usd_idr)]);
-  if (usesSGD) rateRows.push([{ content: "SGD → IDR rate", styles: { halign: "right" } }, fmtRp(fx.sgd_idr)]);
+  if (usesUSD) rateRows.push([{ content: "USD to IDR rate", styles: { halign: "right" } }, fmtRp(fx.usd_idr)]);
+  if (usesSGD) rateRows.push([{ content: "SGD to IDR rate", styles: { halign: "right" } }, fmtRp(fx.sgd_idr)]);
 
   autoTable(doc, {
-    startY: (t1?.finalY ?? 100) + 4,
+    startY: (t1FinalY ?? 100) + 4,
     body: [
       ...rateRows,
       [{ content: "Sales Tax", styles: { halign: "right" } }, ""],
@@ -309,7 +317,7 @@ export function generateQuotationPDF({ customerName, packages, divisor, courierN
   });
   const { charged: totalCharged, minApplied } = finalizeCharged(totalRaw);
 
-  const t1 = autoTable(doc, {
+  autoTable(doc, {
     startY: sepY + 6,
     head: [["Package", "Actual Weight", "Dimensions (L×W×H)", "Volumetric", "Greater-of", "Basis"]],
     body,
@@ -319,10 +327,13 @@ export function generateQuotationPDF({ customerName, packages, divisor, courierN
     margin: M,
     rowPageBreak: "avoid",
   });
+  // See note above generateInvoicePDF's totals table — autoTable's return
+  // value is always undefined; the real finished position is doc.lastAutoTable.
+  const t1FinalY = doc.lastAutoTable?.finalY;
 
   const total = totalCharged * ratePerKg;
   autoTable(doc, {
-    startY: (t1?.finalY ?? 80) + 8,
+    startY: (t1FinalY ?? 80) + 8,
     head: [["", ""]],
     showHead: false,
     body: [
