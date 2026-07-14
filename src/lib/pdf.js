@@ -109,6 +109,12 @@ export function generateInvoicePDF(order, customer, shipment, courier, liveFx) {
     totalRaw += ch.raw; totalActual += +p.weight; totalVol += ch.vol;
   });
   const autoCBM = pkgs.reduce((a, p) => a + ((+p.l) * (+p.w) * (+p.h)) / 1_000_000, 0);
+  const chargedAuto = finalizeCharged(totalRaw).charged;
+  // Same override precedence the pricing engine uses elsewhere in this file
+  // (see cbmA/cbmB and `charged` below) — reused here so the header block
+  // and the fee calculations never disagree with each other.
+  const displayCBM = +order.cbm_us_sg || +order.cbm_sg_id || autoCBM;
+  const displayWeight = totalActual || +order.charged_override || chargedAuto;
 
   // Info box — Invoice No. / Invoice Date / Bill To (Ship-to removed)
   const bx = 113, by = 22, bw = 82;
@@ -152,14 +158,13 @@ export function generateInvoicePDF(order, customer, shipment, courier, liveFx) {
   sdField(M.left, sdRow(0), "Shipping Mark:", order.marking_code || "—");
   sdField(sdCol2X, sdRow(0), "Shipper:", order.supplier_name || "—");
   sdField(M.left, sdRow(1), "No. of Packages:", pkgs.length);
-  sdField(sdCol2X, sdRow(1), "Weight:", `${totalActual.toFixed(1)} kg`);
-  sdField(M.left, sdRow(2), "Dimensions:", `${autoCBM.toFixed(3)} CBM`);
+  sdField(sdCol2X, sdRow(1), "Weight:", displayWeight ? `${displayWeight.toFixed(1)} kg` : "—");
+  sdField(M.left, sdRow(2), "Dimensions:", displayCBM ? `${displayCBM.toFixed(3)} CBM` : "—");
   doc.setTextColor(...INK);
   const sdBottomY = sdRow(2) + 3;
 
   // Build fee lines — same logic as Dashboard quote()
   const isAirM = (m) => m && m !== "Seafreight";
-  const chargedAuto = finalizeCharged(totalRaw).charged;
   const charged = +order.charged_override || chargedAuto;
   const rate = +order.price_per_kg || 0;
   const feeMode = isAirM(order.shipping_us_sg) && isAirM(order.shipping_sg_id) ? "air_air"
